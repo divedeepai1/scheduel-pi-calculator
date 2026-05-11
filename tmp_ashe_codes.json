@@ -1,0 +1,522 @@
+[
+  {
+    "code": "111",
+    "profession": "Chief Executives and Senior Officials",
+    "label": "111 - Chief Executives and Senior Officials"
+  },
+  {
+    "code": "112",
+    "profession": "Production Managers and Directors",
+    "label": "112 - Production Managers and Directors"
+  },
+  {
+    "code": "113",
+    "profession": "Functional Managers and Directors",
+    "label": "113 - Functional Managers and Directors"
+  },
+  {
+    "code": "114",
+    "profession": "Directors in Logistics, Warehousing and Transport",
+    "label": "114 - Directors in Logistics, Warehousing and Transport"
+  },
+  {
+    "code": "115",
+    "profession": "Managers and Directors in Retail and Wholesale",
+    "label": "115 - Managers and Directors in Retail and Wholesale"
+  },
+  {
+    "code": "116",
+    "profession": "Senior Officers in Protective Services",
+    "label": "116 - Senior Officers in Protective Services"
+  },
+  {
+    "code": "117",
+    "profession": "Health and Social Services Managers and Directors",
+    "label": "117 - Health and Social Services Managers and Directors"
+  },
+  {
+    "code": "121",
+    "profession": "Managers and Proprietors in Agriculture Related Services",
+    "label": "121 - Managers and Proprietors in Agriculture Related Services"
+  },
+  {
+    "code": "122",
+    "profession": "Managers and Proprietors in Hospitality and Leisure Services",
+    "label": "122 - Managers and Proprietors in Hospitality and Leisure Services"
+  },
+  {
+    "code": "123",
+    "profession": "Managers and Proprietors in Health and Care Services",
+    "label": "123 - Managers and Proprietors in Health and Care Services"
+  },
+  {
+    "code": "124",
+    "profession": "Managers in Logistics, Warehousing and Transport",
+    "label": "124 - Managers in Logistics, Warehousing and Transport"
+  },
+  {
+    "code": "125",
+    "profession": "Managers and Proprietors in Other Services",
+    "label": "125 - Managers and Proprietors in Other Services"
+  },
+  {
+    "code": "211",
+    "profession": "Natural and Social Science Professionals",
+    "label": "211 - Natural and Social Science Professionals"
+  },
+  {
+    "code": "212",
+    "profession": "Engineering Professionals",
+    "label": "212 - Engineering Professionals"
+  },
+  {
+    "code": "213",
+    "profession": "Information Technology Professionals",
+    "label": "213 - Information Technology Professionals"
+  },
+  {
+    "code": "214",
+    "profession": "Web and Multimedia Design Professionals",
+    "label": "214 - Web and Multimedia Design Professionals"
+  },
+  {
+    "code": "215",
+    "profession": "Conservation and Environment Professionals",
+    "label": "215 - Conservation and Environment Professionals"
+  },
+  {
+    "code": "216",
+    "profession": "Research and Development (R&D) and Other Research Professionals",
+    "label": "216 - Research and Development (R&D) and Other Research Professionals"
+  },
+  {
+    "code": "221",
+    "profession": "Medical Practitioners",
+    "label": "221 - Medical Practitioners"
+  },
+  {
+    "code": "222",
+    "profession": "Therapy Professionals",
+    "label": "222 - Therapy Professionals"
+  },
+  {
+    "code": "223",
+    "profession": "Nursing Professionals",
+    "label": "223 - Nursing Professionals"
+  },
+  {
+    "code": "224",
+    "profession": "Veterinarians",
+    "label": "224 - Veterinarians"
+  },
+  {
+    "code": "225",
+    "profession": "Other Health Professionals",
+    "label": "225 - Other Health Professionals"
+  },
+  {
+    "code": "231",
+    "profession": "Teaching Professionals",
+    "label": "231 - Teaching Professionals"
+  },
+  {
+    "code": "232",
+    "profession": "Other Educational Professionals",
+    "label": "232 - Other Educational Professionals"
+  },
+  {
+    "code": "241",
+    "profession": "Legal Professionals",
+    "label": "241 - Legal Professionals"
+  },
+  {
+    "code": "242",
+    "profession": "Finance Professionals",
+    "label": "242 - Finance Professionals"
+  },
+  {
+    "code": "243",
+    "profession": "Business, Research and Administrative Professionals",
+    "label": "243 - Business, Research and Administrative Professionals"
+  },
+  {
+    "code": "244",
+    "profession": "Business and Financial Project Management Professionals",
+    "label": "244 - Business and Financial Project Management Professionals"
+  },
+  {
+    "code": "245",
+    "profession": "Architects, Chartered Architectural Technologists, Planning Officers, Surveyors and Construction Professionals",
+    "label": "245 - Architects, Chartered Architectural Technologists, Planning Officers, Surveyors and Construction Professionals"
+  },
+  {
+    "code": "246",
+    "profession": "Welfare Professionals",
+    "label": "246 - Welfare Professionals"
+  },
+  {
+    "code": "247",
+    "profession": "Librarians and Related Professionals",
+    "label": "247 - Librarians and Related Professionals"
+  },
+  {
+    "code": "248",
+    "profession": "Quality and Regulatory Professionals",
+    "label": "248 - Quality and Regulatory Professionals"
+  },
+  {
+    "code": "249",
+    "profession": "Media Professionals",
+    "label": "249 - Media Professionals"
+  },
+  {
+    "code": "311",
+    "profession": "Science, Engineering and Production Technicians",
+    "label": "311 - Science, Engineering and Production Technicians"
+  },
+  {
+    "code": "312",
+    "profession": "CAD, Drawing and Architectural Technicians",
+    "label": "312 - CAD, Drawing and Architectural Technicians"
+  },
+  {
+    "code": "313",
+    "profession": "Information Technology Technicians",
+    "label": "313 - Information Technology Technicians"
+  },
+  {
+    "code": "321",
+    "profession": "Health Associate Professionals",
+    "label": "321 - Health Associate Professionals"
+  },
+  {
+    "code": "322",
+    "profession": "Welfare and Housing Associate Professionals",
+    "label": "322 - Welfare and Housing Associate Professionals"
+  },
+  {
+    "code": "323",
+    "profession": "Teaching and Childcare Associate Professionals",
+    "label": "323 - Teaching and Childcare Associate Professionals"
+  },
+  {
+    "code": "324",
+    "profession": "Veterinary nurses",
+    "label": "324 - Veterinary nurses"
+  },
+  {
+    "code": "331",
+    "profession": "Protective Service Occupations",
+    "label": "331 - Protective Service Occupations"
+  },
+  {
+    "code": "341",
+    "profession": "Artistic, Literary and Media Occupations",
+    "label": "341 - Artistic, Literary and Media Occupations"
+  },
+  {
+    "code": "342",
+    "profession": "Design Occupations",
+    "label": "342 - Design Occupations"
+  },
+  {
+    "code": "343",
+    "profession": "Sports and Fitness Occupations",
+    "label": "343 - Sports and Fitness Occupations"
+  },
+  {
+    "code": "351",
+    "profession": "Transport Associate Professionals",
+    "label": "351 - Transport Associate Professionals"
+  },
+  {
+    "code": "352",
+    "profession": "Legal Associate Professionals",
+    "label": "352 - Legal Associate Professionals"
+  },
+  {
+    "code": "353",
+    "profession": "Finance Associate Professionals",
+    "label": "353 - Finance Associate Professionals"
+  },
+  {
+    "code": "354",
+    "profession": "Business Associate Professionals",
+    "label": "354 - Business Associate Professionals"
+  },
+  {
+    "code": "355",
+    "profession": "Sales, Marketing and Related Associate Professionals",
+    "label": "355 - Sales, Marketing and Related Associate Professionals"
+  },
+  {
+    "code": "356",
+    "profession": "Public Services Associate Professionals",
+    "label": "356 - Public Services Associate Professionals"
+  },
+  {
+    "code": "357",
+    "profession": "HR, Training and Other Vocational Associate Guidance Professionals",
+    "label": "357 - HR, Training and Other Vocational Associate Guidance Professionals"
+  },
+  {
+    "code": "358",
+    "profession": "Regulatory Associate Professionals",
+    "label": "358 - Regulatory Associate Professionals"
+  },
+  {
+    "code": "411",
+    "profession": "Administrative Occupations: Government and Related Organisations",
+    "label": "411 - Administrative Occupations: Government and Related Organisations"
+  },
+  {
+    "code": "412",
+    "profession": "Administrative Occupations: Finance",
+    "label": "412 - Administrative Occupations: Finance"
+  },
+  {
+    "code": "413",
+    "profession": "Administrative Occupations: Records",
+    "label": "413 - Administrative Occupations: Records"
+  },
+  {
+    "code": "414",
+    "profession": "Administrative Occupations: Office Managers and Supervisors",
+    "label": "414 - Administrative Occupations: Office Managers and Supervisors"
+  },
+  {
+    "code": "415",
+    "profession": "Other Administrative Occupations",
+    "label": "415 - Other Administrative Occupations"
+  },
+  {
+    "code": "421",
+    "profession": "Secretarial and Related Occupations",
+    "label": "421 - Secretarial and Related Occupations"
+  },
+  {
+    "code": "511",
+    "profession": "Agricultural and Related Trades",
+    "label": "511 - Agricultural and Related Trades"
+  },
+  {
+    "code": "521",
+    "profession": "Metal Forming, Welding and Related Trades",
+    "label": "521 - Metal Forming, Welding and Related Trades"
+  },
+  {
+    "code": "522",
+    "profession": "Metal Machining, Fitting and Instrument Making Trades",
+    "label": "522 - Metal Machining, Fitting and Instrument Making Trades"
+  },
+  {
+    "code": "523",
+    "profession": "Vehicle Trades",
+    "label": "523 - Vehicle Trades"
+  },
+  {
+    "code": "524",
+    "profession": "Electrical and Electronic Trades",
+    "label": "524 - Electrical and Electronic Trades"
+  },
+  {
+    "code": "525",
+    "profession": "Skilled Metal, Electrical and Electronic Trades Supervisors",
+    "label": "525 - Skilled Metal, Electrical and Electronic Trades Supervisors"
+  },
+  {
+    "code": "531",
+    "profession": "Construction and Building Trades",
+    "label": "531 - Construction and Building Trades"
+  },
+  {
+    "code": "532",
+    "profession": "Building Finishing Trades",
+    "label": "532 - Building Finishing Trades"
+  },
+  {
+    "code": "533",
+    "profession": "Construction and Building Trades Supervisors",
+    "label": "533 - Construction and Building Trades Supervisors"
+  },
+  {
+    "code": "541",
+    "profession": "Textiles and Garments Trades",
+    "label": "541 - Textiles and Garments Trades"
+  },
+  {
+    "code": "542",
+    "profession": "Printing Trades",
+    "label": "542 - Printing Trades"
+  },
+  {
+    "code": "543",
+    "profession": "Food Preparation and Hospitality Trades",
+    "label": "543 - Food Preparation and Hospitality Trades"
+  },
+  {
+    "code": "544",
+    "profession": "Other Skilled Trades",
+    "label": "544 - Other Skilled Trades"
+  },
+  {
+    "code": "611",
+    "profession": "Teaching and Childcare Support Occupations",
+    "label": "611 - Teaching and Childcare Support Occupations"
+  },
+  {
+    "code": "612",
+    "profession": "Animal Care and Control Services",
+    "label": "612 - Animal Care and Control Services"
+  },
+  {
+    "code": "613",
+    "profession": "Caring Personal Services",
+    "label": "613 - Caring Personal Services"
+  },
+  {
+    "code": "621",
+    "profession": "Leisure and Travel Services",
+    "label": "621 - Leisure and Travel Services"
+  },
+  {
+    "code": "622",
+    "profession": "Hairdressers and Related Services",
+    "label": "622 - Hairdressers and Related Services"
+  },
+  {
+    "code": "623",
+    "profession": "Housekeeping and Related Services",
+    "label": "623 - Housekeeping and Related Services"
+  },
+  {
+    "code": "624",
+    "profession": "Cleaning and Housekeeping Managers and Supervisors",
+    "label": "624 - Cleaning and Housekeeping Managers and Supervisors"
+  },
+  {
+    "code": "625",
+    "profession": "Bed and Breakfast and Guest House Owners and Proprietors",
+    "label": "625 - Bed and Breakfast and Guest House Owners and Proprietors"
+  },
+  {
+    "code": "631",
+    "profession": "Community and Civil Enforcement Occupations",
+    "label": "631 - Community and Civil Enforcement Occupations"
+  },
+  {
+    "code": "711",
+    "profession": "Sales Assistants and Retail Cashiers",
+    "label": "711 - Sales Assistants and Retail Cashiers"
+  },
+  {
+    "code": "712",
+    "profession": "Sales Related Occupations",
+    "label": "712 - Sales Related Occupations"
+  },
+  {
+    "code": "713",
+    "profession": "Shopkeepers and Sales Supervisors",
+    "label": "713 - Shopkeepers and Sales Supervisors"
+  },
+  {
+    "code": "721",
+    "profession": "Customer Service Occupations",
+    "label": "721 - Customer Service Occupations"
+  },
+  {
+    "code": "722",
+    "profession": "Customer Service Supervisors",
+    "label": "722 - Customer Service Supervisors"
+  },
+  {
+    "code": "811",
+    "profession": "Process Operatives",
+    "label": "811 - Process Operatives"
+  },
+  {
+    "code": "812",
+    "profession": "Metal Working Machine Operatives",
+    "label": "812 - Metal Working Machine Operatives"
+  },
+  {
+    "code": "813",
+    "profession": "Plant and Machine Operatives",
+    "label": "813 - Plant and Machine Operatives"
+  },
+  {
+    "code": "814",
+    "profession": "Assemblers and Routine Operatives",
+    "label": "814 - Assemblers and Routine Operatives"
+  },
+  {
+    "code": "815",
+    "profession": "Construction Operatives",
+    "label": "815 - Construction Operatives"
+  },
+  {
+    "code": "816",
+    "profession": "Production, Factory and Assembly Supervisors",
+    "label": "816 - Production, Factory and Assembly Supervisors"
+  },
+  {
+    "code": "821",
+    "profession": "Road Transport Drivers",
+    "label": "821 - Road Transport Drivers"
+  },
+  {
+    "code": "822",
+    "profession": "Mobile Machine Drivers and Operatives",
+    "label": "822 - Mobile Machine Drivers and Operatives"
+  },
+  {
+    "code": "823",
+    "profession": "Other Drivers and Transport Operatives",
+    "label": "823 - Other Drivers and Transport Operatives"
+  },
+  {
+    "code": "911",
+    "profession": "Elementary Agricultural Occupations",
+    "label": "911 - Elementary Agricultural Occupations"
+  },
+  {
+    "code": "912",
+    "profession": "Elementary Construction Occupations",
+    "label": "912 - Elementary Construction Occupations"
+  },
+  {
+    "code": "913",
+    "profession": "Elementary Process Plant Occupations",
+    "label": "913 - Elementary Process Plant Occupations"
+  },
+  {
+    "code": "921",
+    "profession": "Elementary Administration Occupations",
+    "label": "921 - Elementary Administration Occupations"
+  },
+  {
+    "code": "922",
+    "profession": "Elementary Cleaning Occupations",
+    "label": "922 - Elementary Cleaning Occupations"
+  },
+  {
+    "code": "923",
+    "profession": "Elementary Security Occupations",
+    "label": "923 - Elementary Security Occupations"
+  },
+  {
+    "code": "924",
+    "profession": "Elementary Sales Occupations",
+    "label": "924 - Elementary Sales Occupations"
+  },
+  {
+    "code": "925",
+    "profession": "Elementary Storage Occupations",
+    "label": "925 - Elementary Storage Occupations"
+  },
+  {
+    "code": "926",
+    "profession": "Other Elementary Services Occupations",
+    "label": "926 - Other Elementary Services Occupations"
+  }
+]

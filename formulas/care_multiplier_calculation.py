@@ -22,18 +22,27 @@ class CareMultiplierCalculation:
 
     def table36_multiplier(self, years: float, trace: List[str] | None = None) -> float:
         self._validate_vector()
-        if years <= 0:
-            raise ValueError("years must be greater than 0 for Table 36 interpolation.")
+        if years < 0:
+            raise ValueError("years must be greater than or equal to 0 for Table 36 interpolation.")
+        if years == 0:
+            if trace is not None:
+                trace.append("DEBUG: Table 36 - 0 years at 0.50%: 0.00000000")
+            return 0.0
 
-        yr_lower = max(1, int(math.floor(years)))
-        yr_upper = yr_lower + 1
-        if yr_upper > len(self.table36_vector):
-            raise ValueError(
-                f"Table 36 vector too short for {years} years; need entry for year {yr_upper}."
-            )
-
-        m_lower = float(self.table36_vector[yr_lower - 1])
-        m_upper = float(self.table36_vector[yr_upper - 1])
+        if years < 1.0:
+            yr_lower = 0
+            yr_upper = 1
+            m_lower = 0.0
+            m_upper = float(self.table36_vector[0])
+        else:
+            yr_lower = int(math.floor(years))
+            yr_upper = yr_lower + 1
+            if yr_upper > len(self.table36_vector):
+                raise ValueError(
+                    f"Table 36 vector too short for {years} years; need entry for year {yr_upper}."
+                )
+            m_lower = float(self.table36_vector[yr_lower - 1])
+            m_upper = float(self.table36_vector[yr_upper - 1])
         interpolated = ((yr_upper - years) * m_lower) + ((years - yr_lower) * m_upper)
 
         if trace is not None:

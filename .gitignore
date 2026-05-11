@@ -1,2 +1,9 @@
 __pycache__/
 *.py[cod]
+
+scripts/
+implementation/
+
+tmp_ashe_codes.csv
+data/lostyears_example_periods.json
+data/pi_split_test.json

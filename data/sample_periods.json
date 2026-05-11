@@ -1,0 +1,32 @@
+[
+  {
+    "period_until_age": 70,
+    "number_of_hours": 20,
+    "time_increment": "Per_Week",
+    "care_rate_type": "Aggregate_Rate",
+    "rate_values": {
+      "Aggregate_Rate": 16.62
+    },
+    "percentage_less": 0
+  },
+  {
+    "period_until_age": 75,
+    "number_of_hours": 30,
+    "time_increment": "Per_Week",
+    "care_rate_type": "Aggregate_Rate",
+    "rate_values": {
+      "Aggregate_Rate": 16.62
+    },
+    "percentage_less": 0
+  },
+  {
+    "age_at_end": 85.35,
+    "number_of_hours": 40,
+    "time_increment": "Per_Week",
+    "care_rate_type": "Aggregate_Rate",
+    "rate_values": {
+      "Aggregate_Rate": 16.62
+    },
+    "percentage_less": 0
+  }
+]
