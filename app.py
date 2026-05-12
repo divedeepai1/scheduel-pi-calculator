@@ -2,10 +2,11 @@ import csv
 import json
 import math
 from datetime import date
+from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import streamlit as st
-from formulas.ashe_loader import load_ashe_row
+from formulas.ashe_loader import load_ashe_row, load_ashe_row_by_prefix
 
 from formulas import (
     CareCalculation,
@@ -143,6 +144,23 @@ def _show_tables_used(title: str, paths) -> None:
         st.write(f"Additional tables (+0.5): `{paths.additional_tables_csv}`")
         st.write(f"Additional tables (0%): `{paths.additional_tables_zero_csv}`")
         st.write(f"Additional tables (+0.5 full): `{paths.additional_tables_point5_csv}`")
+
+
+def _resolve_ashe_table14_workbook_path(year: int, table_label: str, cv_variant: bool = False) -> str:
+    if int(year) != 2025:
+        raise ValueError("Only ASHE year 2025 is currently bundled in local data.")
+    labels = ashe_table_labels()
+    idx = {lbl.strip().lower(): i + 1 for i, lbl in enumerate(labels)}
+    code_num = idx.get(str(table_label).strip().lower())
+    if code_num is None:
+        raise ValueError(f"Unsupported ASHE table '{table_label}'.")
+    suffix = "b" if cv_variant else "a"
+    cv_part = " CV" if cv_variant else ""
+    file_name = f"PROV - Occupation SOC20 (4) Table 14.{code_num}{suffix}   {table_label} 2025{cv_part}.xlsx"
+    path = Path("data") / "ashetable142025provisional" / file_name
+    if not path.exists():
+        raise ValueError(f"Resolved ASHE Table 14 workbook was not found: {path}")
+    return str(path).replace("\\", "/")
 
 
 def _base_inputs(key_prefix: str) -> Dict[str, float]:
@@ -317,6 +335,48 @@ def _load_ashe_code_options(json_path: str) -> List[Dict[str, str]]:
     return out
 
 
+@st.cache_data(show_spinner=False)
+def _load_ashe_pi_code_options(json_path: str) -> List[Dict[str, str]]:
+    unit_rows = _load_ashe_code_options(json_path)
+    major_labels = {
+        "1": "Managers, directors and senior officials",
+        "2": "Professional occupations",
+        "3": "Associate professional occupations",
+        "4": "Administrative and secretarial occupations",
+        "5": "Skilled trades occupations",
+        "6": "Caring, leisure and other service occupations",
+        "7": "Sales and customer service occupations",
+        "8": "Process, plant and machine operatives",
+        "9": "Elementary occupations",
+    }
+    sub_major_labels = {
+        "11": "Corporate managers and directors",
+        "12": "Other managers and proprietors",
+        "21": "Science, research, engineering and technology professionals",
+        "22": "Health professionals",
+        "23": "Teaching and educational professionals",
+        "24": "Business, media and public service professionals",
+        "31": "Science, engineering and technology associate professionals",
+        "32": "Health and social care associate professionals",
+        "33": "Protective service occupations",
+        "34": "Culture, media and sports occupations",
+        "35": "Business and public service associate professionals",
+    }
+
+    out: List[Dict[str, str]] = []
+    for code, label in major_labels.items():
+        out.append({"code": code, "profession": label, "label": f"{code} - {label}"})
+
+    existing_units = {str(r["code"]).strip() for r in unit_rows}
+    for code, label in sub_major_labels.items():
+        if any(u.startswith(code) for u in existing_units):
+            out.append({"code": code, "profession": label, "label": f"{code} - {label}"})
+
+    for row in unit_rows:
+        out.append({"code": row["code"], "profession": row["profession"], "label": row["label"]})
+    return out
+
+
 st.set_page_config(page_title="Scheduel Calculator", layout="wide")
 st.title("Scheduel Calculator")
 st.caption("Streamlit interface for implemented PI-style calculation functions.")
@@ -340,6 +400,7 @@ selected_function = st.sidebar.selectbox(
         "Employment Settings (Test)",
         "Earnings",
         "Earnings (ASHE)",
+        "ASHE Lookup (Test)",
         "Earnings (Split)",
         "Earnings Award",
         "Lost Years",
@@ -3665,45 +3726,6 @@ elif selected_function == "Earnings (ASHE)":
         gender = st.selectbox("Gender", ["male", "female"], key="eas_gender")
         region = st.selectbox("Region", ["England_Wales_NI"], key="eas_calc_region")
         employment_type = st.selectbox("Employment Type", ["employed", "self_employed"], key="eas_employment_type")
-        ws_ashe = st.selectbox(
-            "Working Status",
-            ["Working Employed", "Working Unemployed", "Not Started Career", "Retired", "No return"],
-            index=1,
-            key="eas_ws",
-        )
-        age_start_work_ashe = None
-        if ws_ashe == "Not Started Career":
-            age_start_work_ashe = st.number_input(
-                "Age to Start Working",
-                value=48.0,
-                min_value=0.0,
-                step=0.01,
-                format="%.2f",
-                key="eas_age_start_work",
-            )
-        edu_ashe = st.selectbox("Education Level", ["Level 3", "Level 2", "Level 1"], index=1, key="eas_edu")
-        dis_ashe = st.selectbox("Disability", ["Not Disabled", "Disabled"], index=0, key="eas_dis")
-        calc_cont_ashe = lookup_contingency(
-            working_status=str(ws_ashe),
-            education_level=str(edu_ashe),
-            disability=str(dis_ashe),
-            age_to_start_working=age_start_work_ashe,
-            claimant_age=(float(claimant_age) if claimant_age is not None else _decimal_age_years(dob=dob, as_of=calculation_date)),
-            gender=str(gender),
-        )
-        st.caption(f"Calculated contingency: {calc_cont_ashe:.2f}")
-        manual_ashe_cont_override = st.checkbox("Manual contingency override", value=False, key="eas_manual_cont_override")
-        if not manual_ashe_cont_override:
-            st.session_state["eas_cont"] = 0.0
-        contingency_factor = st.number_input(
-            "Contingency Factor",
-            value=0.0,
-            min_value=0.0,
-            step=0.01,
-            format="%.4f",
-            key="eas_cont",
-            disabled=(not manual_ashe_cont_override),
-        )
         if le_input_mode == "derived_from_dates":
             life_expectancy_basis = st.selectbox(
                 "Life Expectancy Basis",
@@ -3747,12 +3769,150 @@ elif selected_function == "Earnings (ASHE)":
             impairment_end_age = 0.0
             years_reduction = 0.0
 
+    st.markdown("#### Contingency Factor")
+    c1, c2 = st.columns(2)
+    claimant_age_for_cont = (float(claimant_age) if claimant_age is not None else _decimal_age_years(dob=dob, as_of=calculation_date))
+    with c1:
+        st.markdown("Before Injury")
+        ws_before = st.selectbox(
+            "Working Status (Before Injury)",
+            ["Working Employed", "Working Unemployed", "Not Started Career", "Retired", "No return"],
+            index=1,
+            key="eas_ws_before",
+        )
+        age_start_work_before = None
+        if ws_before == "Not Started Career":
+            age_start_work_before = st.number_input(
+                "Age to Start Working (Before Injury)",
+                value=48.0,
+                min_value=0.0,
+                step=0.01,
+                format="%.2f",
+                key="eas_age_start_work_before",
+            )
+        edu_before = st.selectbox("Education Level (Before Injury)", ["Level 3", "Level 2", "Level 1"], index=1, key="eas_edu_before")
+        dis_before = st.selectbox("Disability (Before Injury)", ["Not Disabled", "Disabled"], index=0, key="eas_dis_before")
+        ret_mode_before = st.selectbox(
+            "Retirement Age (Before Injury)",
+            ["Use state retirement age", "Specify retirement age"],
+            index=0,
+            key="eas_ret_mode_before",
+        )
+        ret_age_before = 68.0
+        if ret_mode_before == "Specify retirement age":
+            ret_age_before = st.number_input(
+                "Specified Retirement Age (Before Injury)",
+                value=68.0,
+                min_value=50.0,
+                max_value=90.0,
+                step=1.0,
+                key="eas_ret_age_before",
+            )
+        calc_cont_before = lookup_contingency(
+            working_status=str(ws_before),
+            education_level=str(edu_before),
+            disability=str(dis_before),
+            age_to_start_working=age_start_work_before,
+            claimant_age=claimant_age_for_cont,
+            gender=str(gender),
+            retirement_age=float(ret_age_before),
+        )
+        st.caption(f"Calculated contingency (Before): {calc_cont_before:.2f}")
+    with c2:
+        st.markdown("As Result Of Injury")
+        ws_after = st.selectbox(
+            "Working Status (As Result)",
+            ["Working Employed", "Working Unemployed", "Not Started Career", "Retired", "No return"],
+            index=1,
+            key="eas_ws_after",
+        )
+        age_start_work_after = None
+        if ws_after == "Not Started Career":
+            age_start_work_after = st.number_input(
+                "Age to Start Working (As Result)",
+                value=55.0,
+                min_value=0.0,
+                step=0.01,
+                format="%.2f",
+                key="eas_age_start_work_after",
+            )
+        edu_after = st.selectbox("Education Level (As Result)", ["Level 3", "Level 2", "Level 1"], index=1, key="eas_edu_after")
+        dis_after = st.selectbox("Disability (As Result)", ["Not Disabled", "Disabled"], index=0, key="eas_dis_after")
+        ret_mode_after = st.selectbox(
+            "Retirement Age (As Result)",
+            ["Use state retirement age", "Specify retirement age"],
+            index=0,
+            key="eas_ret_mode_after",
+        )
+        ret_age_after = 68.0
+        if ret_mode_after == "Specify retirement age":
+            ret_age_after = st.number_input(
+                "Specified Retirement Age (As Result)",
+                value=68.0,
+                min_value=50.0,
+                max_value=90.0,
+                step=1.0,
+                key="eas_ret_age_after",
+            )
+        calc_cont_after = lookup_contingency(
+            working_status=str(ws_after),
+            education_level=str(edu_after),
+            disability=str(dis_after),
+            age_to_start_working=age_start_work_after,
+            claimant_age=claimant_age_for_cont,
+            gender=str(gender),
+            retirement_age=float(ret_age_after),
+        )
+        st.caption(f"Calculated contingency (As Result): {calc_cont_after:.2f}")
+        manual_ashe_cont_override = st.checkbox("Manual contingency override", value=False, key="eas_manual_cont_override")
+        if not manual_ashe_cont_override:
+            st.session_state["eas_cont_before"] = 0.0
+            st.session_state["eas_cont_after"] = 0.0
+        cont_before = st.number_input(
+            "Override Contingency Before Injury",
+            value=0.0,
+            min_value=0.0,
+            step=0.01,
+            format="%.4f",
+            key="eas_cont_before",
+            disabled=(not manual_ashe_cont_override),
+        )
+        cont_after = st.number_input(
+            "Override Contingency As Result Of Injury",
+            value=0.0,
+            min_value=0.0,
+            step=0.01,
+            format="%.4f",
+            key="eas_cont_after",
+            disabled=(not manual_ashe_cont_override),
+        )
+
     st.markdown("#### Loss Configuration")
     l1, l2 = st.columns(2)
     with l1:
-        age_at_start = st.number_input("Age at Start", value=42.76, step=0.01, format="%.2f", key="eas_age_start")
+        age_at_start_text = st.text_input(
+            "Loss Age(s) Start",
+            value="",
+            placeholder="Age at Calculation",
+            key="eas_age_start_text",
+        )
     with l2:
-        age_at_end = st.number_input("Age at End", value=68.0, step=0.01, format="%.2f", key="eas_age_end")
+        age_at_end_text = st.text_input(
+            "Loss Age(s) End",
+            value="",
+            placeholder="Until Retirement",
+            key="eas_age_end_text",
+        )
+        retirement_age_mapping = st.number_input(
+            "Retirement Age (table mapping)",
+            value=68.0,
+            min_value=50.0,
+            max_value=90.0,
+            step=1.0,
+            key="eas_ret_age_map",
+        )
+    l3, _ = st.columns(2)
+    with l3:
         life_expectancy_end_age = st.number_input(
             "Life Expectancy End Age (optional cap)",
             value=0.0,
@@ -3762,62 +3922,20 @@ elif selected_function == "Earnings (ASHE)":
             key="eas_life_expectancy_end_age",
         )
 
-    st.markdown("#### Earnings Inputs")
-    e1, e2 = st.columns(2)
-    with e1:
-        but_for_amount_manual = st.number_input(
-            "Earnings (but for) Amount",
-            value=0.0,
-            min_value=0.0,
-            step=100.0,
-            key="eas_bf_amount_manual",
-        )
-        but_for_use_manual_amount = st.checkbox(
-            "Use manual but-for amount",
-            value=True,
-            key="eas_bf_use_manual",
-        )
-        but_for_frequency = st.selectbox(
-            "But For Frequency",
-            ["Per_Year", "Per_Month", "Per_Week"],
-            index=0,
-            key="eas_bf_frequency",
-        )
-        but_for_rate = st.selectbox(
-            "But For Rate",
-            ["Gross (Employed)", "Gross (Self-employed)", "Net"],
-            index=0,
-            key="eas_bf_rate",
-        )
-    with e2:
-        residual_amount_manual = st.number_input(
-            "Earnings (residual) Amount",
-            value=0.0,
-            min_value=0.0,
-            step=100.0,
-            key="eas_res_amount_manual",
-        )
-        residual_use_manual_amount = st.checkbox(
-            "Use manual residual amount",
-            value=True,
-            key="eas_res_use_manual",
-        )
-        residual_frequency = st.selectbox(
-            "Residual Frequency",
-            ["Per_Year", "Per_Month", "Per_Week"],
-            index=0,
-            key="eas_res_frequency",
-        )
-        residual_rate = st.selectbox(
-            "Residual Rate",
-            ["Gross (Employed)", "Gross (Self-employed)", "Net"],
-            index=0,
-            key="eas_res_rate",
-        )
-
     st.markdown("#### ASHE Selection")
     s1, s2 = st.columns(2)
     ashe_code_json_path = "tmp_ashe_codes.json"
+    dataset_display = {
+        "all_workers": "All workers",
+        "all_male_workers": "All male workers",
+        "all_female_workers": "All female workers",
+        "all_full_time_workers": "All full-time workers",
+        "all_part_time_workers": "All part-time workers",
+        "male_full_time_workers": "Male full-time workers",
+        "male_part_time_workers": "Male part-time workers",
+        "female_full_time_workers": "Female full-time workers",
+        "female_part_time_workers": "Female part-time workers",
+    }
     with s1:
         ashe_year = st.selectbox("ASHE Year", [2025], key="eas_year")
         ashe_table_label = st.selectbox("ASHE Table", ashe_table_labels(), index=6, key="eas_table_label")
@@ -3835,6 +3953,7 @@ elif selected_function == "Earnings (ASHE)":
                 "female_part_time_workers",
             ],
             key="eas_dataset",
+            format_func=lambda v: dataset_display.get(v, v),
         )
         ashe_code_json_path = st.text_input(
             "ASHE Code JSON Path",
@@ -3842,10 +3961,10 @@ elif selected_function == "Earnings (ASHE)":
             key="eas_code_json_path",
         )
     with s2:
-        code_options = _load_ashe_code_options(ashe_code_json_path)
+        code_options = _load_ashe_pi_code_options(ashe_code_json_path)
         default_idx = 0
         for i, o in enumerate(code_options):
-            if o["code"] == "112":
+            if o["code"] == "1":
                 default_idx = i
                 break
         ashe_code_label = st.selectbox(
@@ -3858,12 +3977,12 @@ elif selected_function == "Earnings (ASHE)":
         ashe_code = selected_option["code"]
         st.caption(f"Selected profession: {selected_option['profession']}")
 
+    st.caption("Using employment profile for calculated scenario contingency.")
+
     with st.expander("ASHE Row Preview", expanded=True):
-        ashe_preview_workbook = resolve_ashe_workbook_path(
+        ashe_preview_workbook = _resolve_ashe_table14_workbook_path(
             year=int(ashe_year),
             table_label=str(ashe_table_label),
-            soc_granularity=3,
-            provisional=True,
             cv_variant=False,
         )
         ashe_preview_row = load_ashe_row(
@@ -3876,37 +3995,135 @@ elif selected_function == "Earnings (ASHE)":
         st.write(f"Jobs (thousands): {ashe_preview_row.jobs_thousands}")
         st.write(f"Median: {ashe_preview_row.median}")
         st.write(f"Mean: {ashe_preview_row.mean}")
-        available_fields: List[str] = []
-        if ashe_preview_row.median is not None:
-            available_fields.append("median")
-        if ashe_preview_row.mean is not None:
-            available_fields.append("mean")
-        for p in sorted(ashe_preview_row.percentiles.keys()):
-            v = ashe_preview_row.percentiles.get(p)
-            if v is not None:
-                available_fields.append(f"p{p}")
-        if not available_fields:
-            st.warning(f"No usable ASHE values available for selected code {ashe_code} in this dataset/table.")
-            but_for_ashe_field = "mean"
-            residual_ashe_field = "mean"
+        percentile_items = sorted(
+            [(int(k), v) for k, v in ashe_preview_row.percentiles.items() if v is not None],
+            key=lambda x: x[0],
+        )
+        if percentile_items:
+            preview_row: Dict[str, float | int | None] = {
+                "Job Numbers (thousands)": ashe_preview_row.jobs_thousands,
+                "Median": ashe_preview_row.median,
+                "Mean": ashe_preview_row.mean,
+            }
+            for p, v in percentile_items:
+                preview_row[str(p)] = v
+            st.markdown("**ASHE Row Values**")
+            st.table([preview_row])
+        ashe_mean_value = float(ashe_preview_row.mean) if ashe_preview_row.mean is not None else None
+        ashe_median_value = float(ashe_preview_row.median) if ashe_preview_row.median is not None else None
+
+    st.markdown("#### Earnings Inputs")
+    e1, e2 = st.columns(2)
+    with e1:
+        but_for_source = st.selectbox(
+            "But For Amount Source",
+            ["Manual", "Mean", "Median"],
+            index=0,
+            key="eas_bf_source",
+        )
+        if but_for_source == "Manual":
+            but_for_amount_manual = st.number_input(
+                "Earnings (but for) Amount",
+                value=0.0,
+                min_value=0.0,
+                step=100.0,
+                key="eas_bf_amount_manual",
+            )
+        elif but_for_source == "Mean":
+            if ashe_mean_value is None:
+                st.warning("ASHE Mean is unavailable for current selection; falling back to 0.")
+                but_for_amount_manual = 0.0
+            else:
+                but_for_amount_manual = float(ashe_mean_value)
+            st.number_input(
+                "Earnings (but for) Amount",
+                value=float(but_for_amount_manual),
+                min_value=0.0,
+                step=100.0,
+                key="eas_bf_amount_auto",
+                disabled=True,
+            )
         else:
-            bf_default = "mean" if "mean" in available_fields else available_fields[0]
-            res_default = "p20" if "p20" in available_fields else bf_default
-            f1, f2 = st.columns(2)
-            with f1:
-                but_for_ashe_field = st.selectbox(
-                    "But For ASHE Value",
-                    available_fields,
-                    index=available_fields.index(bf_default),
-                    key="eas_bf_field",
-                )
-            with f2:
-                residual_ashe_field = st.selectbox(
-                    "Residual ASHE Value",
-                    available_fields,
-                    index=available_fields.index(res_default),
-                    key="eas_res_field",
-                )
+            if ashe_median_value is None:
+                st.warning("ASHE Median is unavailable for current selection; falling back to 0.")
+                but_for_amount_manual = 0.0
+            else:
+                but_for_amount_manual = float(ashe_median_value)
+            st.number_input(
+                "Earnings (but for) Amount",
+                value=float(but_for_amount_manual),
+                min_value=0.0,
+                step=100.0,
+                key="eas_bf_amount_auto",
+                disabled=True,
+            )
+        but_for_frequency = st.selectbox(
+            "But For Frequency",
+            ["Per_Year", "Per_Month", "Per_Week"],
+            index=0,
+            key="eas_bf_frequency",
+        )
+        but_for_rate = st.selectbox(
+            "But For Rate",
+            ["Gross (Employed)", "Gross (Self-employed)", "Net"],
+            index=0,
+            key="eas_bf_rate",
+        )
+    with e2:
+        residual_source = st.selectbox(
+            "Residual Amount Source",
+            ["Manual", "Mean", "Median"],
+            index=0,
+            key="eas_res_source",
+        )
+        if residual_source == "Manual":
+            residual_amount_manual = st.number_input(
+                "Earnings (residual) Amount",
+                value=0.0,
+                min_value=0.0,
+                step=100.0,
+                key="eas_res_amount_manual",
+            )
+        elif residual_source == "Mean":
+            if ashe_mean_value is None:
+                st.warning("ASHE Mean is unavailable for current selection; falling back to 0.")
+                residual_amount_manual = 0.0
+            else:
+                residual_amount_manual = float(ashe_mean_value)
+            st.number_input(
+                "Earnings (residual) Amount",
+                value=float(residual_amount_manual),
+                min_value=0.0,
+                step=100.0,
+                key="eas_res_amount_auto",
+                disabled=True,
+            )
+        else:
+            if ashe_median_value is None:
+                st.warning("ASHE Median is unavailable for current selection; falling back to 0.")
+                residual_amount_manual = 0.0
+            else:
+                residual_amount_manual = float(ashe_median_value)
+            st.number_input(
+                "Earnings (residual) Amount",
+                value=float(residual_amount_manual),
+                min_value=0.0,
+                step=100.0,
+                key="eas_res_amount_auto",
+                disabled=True,
+            )
+        residual_frequency = st.selectbox(
+            "Residual Frequency",
+            ["Per_Year", "Per_Month", "Per_Week"],
+            index=0,
+            key="eas_res_frequency",
+        )
+        residual_rate = st.selectbox(
+            "Residual Rate",
+            ["Gross (Employed)", "Gross (Self-employed)", "Net"],
+            index=0,
+            key="eas_res_rate",
+        )
 
     st.markdown("#### Data Sources")
     d1, d2 = st.columns(2)
@@ -3938,6 +4155,11 @@ elif selected_function == "Earnings (ASHE)":
 
     if st.button("Compute Earnings (ASHE)", use_container_width=True):
         try:
+            start_raw = (age_at_start_text or "").strip()
+            end_raw = (age_at_end_text or "").strip()
+            age_at_start = float(start_raw) if start_raw else None
+            age_at_end = float(end_raw) if end_raw else None
+
             if le_input_mode == "manual_years":
                 if claimant_age is None:
                     raise ValueError("Claimant Age is required in manual_years mode.")
@@ -3975,22 +4197,30 @@ elif selected_function == "Earnings (ASHE)":
                 else:
                     effective_life_end_age = float(derived_life_end_age)
 
+            if age_at_start is None:
+                age_at_start = float(effective_claimant_age)
+            if age_at_end is None:
+                age_at_end = float(retirement_age_mapping)
+
             ashe_workbook_path = (
                 str(ashe_workbook_path_manual).strip()
                 if use_manual_ashe_workbook
-                else resolve_ashe_workbook_path(
+                else _resolve_ashe_table14_workbook_path(
                     year=int(ashe_year),
                     table_label=str(ashe_table_label),
-                    soc_granularity=3,
-                    provisional=True,
                     cv_variant=False,
                 )
             )
-            but_for_amount = float(but_for_amount_manual) if bool(but_for_use_manual_amount) else None
-            residual_amount = float(residual_amount_manual) if bool(residual_use_manual_amount) else None
+            but_for_source_map = {"Manual": None, "Mean": "mean", "Median": "median"}
+            residual_source_map = {"Manual": None, "Mean": "mean", "Median": "median"}
+            but_for_amount = float(but_for_amount_manual) if str(but_for_source) == "Manual" else None
+            residual_amount = float(residual_amount_manual) if str(residual_source) == "Manual" else None
+            but_for_ashe_field = but_for_source_map[str(but_for_source)] or "mean"
+            residual_ashe_field = residual_source_map[str(residual_source)] or "mean"
             but_for_is_net = str(but_for_rate) == "Net"
             residual_is_net = str(residual_rate) == "Net"
-            effective_contingency_factor = float(contingency_factor) if manual_ashe_cont_override else float(calc_cont_ashe)
+            contingency_before = float(cont_before) if manual_ashe_cont_override else float(calc_cont_before)
+            contingency_after = float(cont_after) if manual_ashe_cont_override else float(calc_cont_after)
 
             base = EarningsCalculation(
                 table36_vector=_load_table36_vector(table36_csv),
@@ -3998,42 +4228,210 @@ elif selected_function == "Earnings (ASHE)":
                 whole_life_table=_load_whole_life_table(whole_life_csv),
             )
             calc = EarningsAsheCalculation(earnings_calculation=base)
-            result = calc.calculate(
-                claimant_age=float(effective_claimant_age),
-                age_at_start=float(age_at_start),
-                age_at_end=float(age_at_end),
-                ashe_workbook_path=str(ashe_workbook_path),
-                ashe_dataset=str(ashe_dataset),
-                ashe_code=str(ashe_code),
-                ashe_region_prefix=(None if not str(ashe_region_prefix).strip() else str(ashe_region_prefix)),
-                but_for_amount=but_for_amount,
-                but_for_ashe_field=str(but_for_ashe_field),
-                but_for_frequency=str(but_for_frequency),
-                but_for_is_net=bool(but_for_is_net),
-                residual_amount=residual_amount,
-                residual_ashe_field=str(residual_ashe_field),
-                residual_frequency=str(residual_frequency),
-                residual_is_net=bool(residual_is_net),
-                employment_type=str(employment_type),
-                region=str(region),
-                contingency_factor=float(effective_contingency_factor),
-                multiplier_mode=str(multiplier_mode),
-                additional_tables_csv=str(additional_tables_csv),
-                life_expectancy_end_age=(
-                    None if effective_life_end_age is None else float(effective_life_end_age)
-                ),
-                round_final_multiplier_dp=int(round_final_multiplier_dp),
-                pi_round_intermediates_2dp=bool(pi_round_intermediates_2dp),
+            # Match Earnings stream-start behavior for Not Started Career.
+            base_start_anchor = float(age_at_start)
+            if str(ws_before) == "Not Started Career" and age_start_work_before is not None:
+                base_start_anchor = max(float(base_start_anchor), float(age_start_work_before))
+            age_at_start_bf = float(base_start_anchor)
+            age_at_start_res = float(base_start_anchor)
+            if str(ws_after) == "Not Started Career" and age_start_work_after is not None:
+                age_at_start_res = max(float(base_start_anchor), float(age_start_work_after))
+
+            def _run_ashe_stream(
+                *,
+                stream_start_age: float,
+                stream_label: str,
+                bf_amount_value: float | None,
+                res_amount_value: float | None,
+                contingency_value: float,
+            ) -> dict:
+                phases = []
+                stream_total = 0.0
+                stream_trace = []
+
+                def _calc_phase(phase_start: float, phase_end: float, phase_name: str):
+                    return calc.calculate(
+                        claimant_age=float(effective_claimant_age),
+                        age_at_start=float(phase_start),
+                        age_at_end=float(phase_end),
+                        ashe_workbook_path=str(ashe_workbook_path),
+                        ashe_dataset=str(ashe_dataset),
+                        ashe_code=str(ashe_code),
+                        ashe_region_prefix=(None if not str(ashe_region_prefix).strip() else str(ashe_region_prefix)),
+                        but_for_amount=bf_amount_value,
+                        but_for_ashe_field=str(but_for_ashe_field),
+                        but_for_frequency=str(but_for_frequency),
+                        but_for_is_net=bool(but_for_is_net),
+                        residual_amount=res_amount_value,
+                        residual_ashe_field=str(residual_ashe_field),
+                        residual_frequency=str(residual_frequency),
+                        residual_is_net=bool(residual_is_net),
+                        employment_type=str(employment_type),
+                        region=str(region),
+                        contingency_factor=float(contingency_value),
+                        multiplier_mode=str(multiplier_mode),
+                        additional_tables_csv=str(additional_tables_csv),
+                        life_expectancy_end_age=(None if effective_life_end_age is None else float(effective_life_end_age)),
+                        round_final_multiplier_dp=int(round_final_multiplier_dp),
+                        pi_round_intermediates_2dp=bool(pi_round_intermediates_2dp),
+                    ), phase_name
+
+                if stream_start_age > float(age_at_start):
+                    pre_result, pre_name = _calc_phase(float(age_at_start), float(stream_start_age), "pre")
+                    phases.append((pre_name, pre_result))
+                    stream_total += float(pre_result["total_loss"])
+                    stream_trace.extend([f"{pre_name.upper()} {line}" for line in pre_result.get("trace", [])])
+
+                if float(age_at_end) > stream_start_age:
+                    main_result, main_name = _calc_phase(float(stream_start_age), float(age_at_end), "main")
+                    phases.append((main_name, main_result))
+                    stream_total += float(main_result["total_loss"])
+                    stream_trace.extend([f"{main_name.upper()} {line}" for line in main_result.get("trace", [])])
+
+                if not phases:
+                    raise ValueError(f"{stream_label} stream has no valid phase (start must be less than end).")
+
+                return {
+                    "stream": stream_label,
+                    "phases": phases,
+                    "trace": stream_trace,
+                    "total_loss": stream_total,
+                    "ashe_code_used": phases[-1][1].get("ashe_code_used"),
+                    "but_for_amount_used": phases[-1][1].get("but_for_amount_used", 0.0),
+                    "residual_amount_used": phases[-1][1].get("residual_amount_used", 0.0),
+                    "period_multiplier": phases[-1][1].get("period_multiplier", 0.0),
+                    "final_multiplier": phases[-1][1].get("final_multiplier", 0.0),
+                }
+
+            result_bf = _run_ashe_stream(
+                stream_start_age=float(age_at_start_bf),
+                stream_label="BUT_FOR",
+                bf_amount_value=but_for_amount,
+                res_amount_value=0.0,
+                contingency_value=float(contingency_before),
             )
+            result_res = _run_ashe_stream(
+                stream_start_age=float(age_at_start_res),
+                stream_label="RESIDUAL",
+                bf_amount_value=0.0,
+                res_amount_value=residual_amount,
+                contingency_value=float(contingency_after),
+            )
+            total_loss = float(result_bf["total_loss"]) + float(result_res["total_loss"])
             st.success(SUCCESS_MSG)
             st.write(f"ASHE Workbook Used: {ashe_workbook_path}")
-            st.write(f"ASHE Code Used: {result['ashe_code_used']}")
-            st.write(f"But For Amount Used: {result['but_for_amount_used']:.8f}")
-            st.write(f"Residual Amount Used: {result['residual_amount_used']:.8f}")
-            st.write(f"Total Loss: {result['total_loss']:.8f}")
-            _render_trace(result["trace"])
+            st.write(f"ASHE Code Used: {result_bf['ashe_code_used']}")
+            st.write(f"But For Amount Used: {result_bf['but_for_amount_used']:.8f}")
+            st.write(f"Residual Amount Used: {result_res['residual_amount_used']:.8f}")
+            for phase_name, phase_result in result_bf["phases"]:
+                st.write(
+                    f"But For {phase_name.title()} Multiplier: "
+                    f"{float(phase_result.get('final_multiplier', 0.0)):.8f}"
+                )
+            for phase_name, phase_result in result_res["phases"]:
+                st.write(
+                    f"Residual {phase_name.title()} Multiplier: "
+                    f"{float(phase_result.get('final_multiplier', 0.0)):.8f}"
+                )
+            st.write(f"Total Loss: {total_loss:.8f}")
+            trace = (
+                [f"DEBUG: Dual-stream contingencies -> before={contingency_before:.8f}, after={contingency_after:.8f}"]
+                + [f"DEBUG: Dual-stream starts -> but_for_start_age={age_at_start_bf:.8f}, residual_start_age={age_at_start_res:.8f}"]
+                + [f"DEBUG: BUT_FOR {line}" for line in result_bf.get("trace", [])]
+                + [f"DEBUG: RESIDUAL {line}" for line in result_res.get("trace", [])]
+                + [f"DEBUG: Dual-stream total = {result_bf['total_loss']:.8f} + ({result_res['total_loss']:.8f}) = {total_loss:.8f}"]
+            )
+            _render_trace(trace)
         except Exception as exc:
             st.error(f"Error: {exc}")
+
+elif selected_function == "ASHE Lookup (Test)":
+    st.subheader("ASHE Lookup (Test)")
+    st.caption("PI-style ASHE lookup sandbox for code/table/dataset parity checks.")
+    s1, s2 = st.columns(2)
+    with s1:
+        ashe_year = st.selectbox("Year", [2025], key="asht_year")
+        ashe_table_label = st.selectbox("Table", ashe_table_labels(), index=6, key="asht_table_label")
+        ashe_dataset = st.selectbox(
+            "Dataset",
+            [
+                "all_workers",
+                "all_male_workers",
+                "all_female_workers",
+                "all_full_time_workers",
+                "all_part_time_workers",
+                "male_full_time_workers",
+                "male_part_time_workers",
+                "female_full_time_workers",
+                "female_part_time_workers",
+            ],
+            key="asht_dataset",
+        )
+        ashe_code_json_path = st.text_input("ASHE Code JSON Path", value="tmp_ashe_codes.json", key="asht_code_json_path")
+    with s2:
+        code_options = _load_ashe_pi_code_options(ashe_code_json_path)
+        default_idx = 0
+        for i, o in enumerate(code_options):
+            if o["code"] == "1":
+                default_idx = i
+                break
+        ashe_code_label = st.selectbox("ASHE Code", [o["label"] for o in code_options], index=default_idx, key="asht_code_label")
+        selected_option = next(o for o in code_options if o["label"] == ashe_code_label)
+        ashe_code = selected_option["code"]
+        st.caption(f"Selected profession: {selected_option['profession']}")
+
+    try:
+        workbook_path = _resolve_ashe_table14_workbook_path(
+            year=int(ashe_year),
+            table_label=str(ashe_table_label),
+            cv_variant=False,
+        )
+        # PI parity path: Table 14 direct code row (major/sub-major/unit).
+        row = load_ashe_row(
+            workbook_path=str(workbook_path),
+            dataset=str(ashe_dataset),
+            code=str(ashe_code),
+            region_prefix=None,
+        )
+        source_used = "ASHE Table 14 (direct code row)"
+    except Exception:
+        # Fallback path: existing Table 15 prefix aggregation.
+        workbook_path = resolve_ashe_workbook_path(
+            year=int(ashe_year),
+            table_label=str(ashe_table_label),
+            soc_granularity=3,
+            provisional=True,
+            cv_variant=False,
+        )
+        row = load_ashe_row_by_prefix(
+            workbook_path=str(workbook_path),
+            dataset=str(ashe_dataset),
+            code_prefix=str(ashe_code),
+        )
+        source_used = "ASHE Table 15 (prefix aggregation fallback)"
+    try:
+        st.markdown("#### Preview")
+        st.write(f"Description: {row.description}")
+        st.write(f"Job Numbers (thousands): {0.0 if row.jobs_thousands is None else row.jobs_thousands:.3f}")
+        st.write(f"Median: {0.0 if row.median is None else row.median:.3f}")
+        st.write(f"Mean: {0.0 if row.mean is None else row.mean:.3f}")
+        preview = {
+            "10": row.percentiles.get(10),
+            "20": row.percentiles.get(20),
+            "25": row.percentiles.get(25),
+            "30": row.percentiles.get(30),
+            "40": row.percentiles.get(40),
+            "60": row.percentiles.get(60),
+            "70": row.percentiles.get(70),
+            "75": row.percentiles.get(75),
+            "80": row.percentiles.get(80),
+            "90": row.percentiles.get(90),
+        }
+        st.table([preview])
+        st.caption(f"Workbook used: {workbook_path}")
+        st.caption(f"Source mode: {source_used}")
+    except Exception as exc:
+        st.error(f"Error: {exc}")
 
 elif selected_function == "Lost Years":
     st.subheader("Lost Years")
