@@ -26,6 +26,7 @@ class PeriodicalMultiplierCalculation:
         end_at_rest_of_life: bool = False,
         loss_amount: float = 0.0,
         pi_parity_mode: bool = True,
+        use_mortality_adjustment: bool = True,
     ) -> dict:
         gp_result = self.gp_calculation.calculate(
             loss_amount=float(loss_amount),
@@ -39,6 +40,7 @@ class PeriodicalMultiplierCalculation:
             start_at_calculation_age=start_at_calculation_age,
             end_at_rest_of_life=end_at_rest_of_life,
             pi_parity_mode=pi_parity_mode,
+            use_mortality_adjustment=use_mortality_adjustment,
         )
         return {
             "method": "periodical_multiplier",

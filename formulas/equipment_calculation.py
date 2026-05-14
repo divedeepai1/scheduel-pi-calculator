@@ -26,6 +26,7 @@ class EquipmentCalculation:
         annual_maintenance: float = 0.0,
         purchase_mortality_mode: str = "no_mortality",
         purchase_boundary_mode: str | None = None,
+        recurring_use_apportionment: bool = True,
     ) -> Dict[str, float | int | List[str]]:
         trace: List[str] = []
 
@@ -112,10 +113,16 @@ class EquipmentCalculation:
         term_start = self._table36_multiplier(years=start_years, trace=trace)
         term_end = self._table36_multiplier(years=end_years, trace=trace)
         term_life = self._table36_multiplier(years=life_expectancy_years, trace=trace)
-        recurring_multiplier = ((term_end - term_start) / term_life) * life_multiplier
-        trace.append(
-            f"DEBUG: Recurring apportionment = (({term_end:.8f} - {term_start:.8f}) / {term_life:.8f}) * {life_multiplier:.8f} = {recurring_multiplier:.8f}"
-        )
+        if recurring_use_apportionment:
+            recurring_multiplier = ((term_end - term_start) / term_life) * life_multiplier
+            trace.append(
+                f"DEBUG: Recurring apportionment = (({term_end:.8f} - {term_start:.8f}) / {term_life:.8f}) * {life_multiplier:.8f} = {recurring_multiplier:.8f}"
+            )
+        else:
+            recurring_multiplier = (term_end - term_start)
+            trace.append(
+                f"DEBUG: Recurring direct term_certain multiplier (no apportionment) = {term_end:.8f} - {term_start:.8f} = {recurring_multiplier:.8f}"
+            )
 
         insurance_total = annual_insurance * recurring_multiplier
         maintenance_total = annual_maintenance * recurring_multiplier

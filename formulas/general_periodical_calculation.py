@@ -74,6 +74,7 @@ class GeneralPeriodicalCalculation:
         start_at_calculation_age: bool = False,
         end_at_rest_of_life: bool = False,
         pi_parity_mode: bool = True,
+        use_mortality_adjustment: bool = True,
     ) -> dict:
         if loss_amount < 0:
             raise ValueError("loss_amount must be non-negative.")
@@ -124,16 +125,24 @@ class GeneralPeriodicalCalculation:
         life_term = CareMultiplierCalculation(self.table36_vector).table36_multiplier(
             life_expectancy_years, trace=trace
         )
-        adjusted_multiplier = float(multiplier * (float(life_multiplier) / float(life_term)))
+        if use_mortality_adjustment:
+            adjusted_multiplier = float(multiplier * (float(life_multiplier) / float(life_term)))
+        else:
+            adjusted_multiplier = float(multiplier)
         if pi_parity_mode:
             adjusted_multiplier = round(float(adjusted_multiplier), 3)
 
         total = float(loss_amount * adjusted_multiplier)
         trace.append(f"DEBUG: Raw Multiplier = sum(factors) = {multiplier:.8f}")
-        trace.append(
-            f"DEBUG: Mortality adjustment = life_multiplier / life_term = {float(life_multiplier):.8f} / {float(life_term):.8f}"
-        )
-        trace.append(f"DEBUG: Adjusted Multiplier = {multiplier:.8f} * ({float(life_multiplier):.8f}/{float(life_term):.8f}) = {adjusted_multiplier:.8f}")
+        if use_mortality_adjustment:
+            trace.append(
+                f"DEBUG: Mortality adjustment = life_multiplier / life_term = {float(life_multiplier):.8f} / {float(life_term):.8f}"
+            )
+            trace.append(
+                f"DEBUG: Adjusted Multiplier = {multiplier:.8f} * ({float(life_multiplier):.8f}/{float(life_term):.8f}) = {adjusted_multiplier:.8f}"
+            )
+        else:
+            trace.append(f"DEBUG: Direct term_certain multiplier (no mortality adjustment) = {adjusted_multiplier:.8f}")
         trace.append(
             f"DEBUG: Total = loss_amount * adjusted_multiplier = {loss_amount:.8f} * {adjusted_multiplier:.8f} = {total:.8f}"
         )

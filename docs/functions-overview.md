@@ -110,16 +110,24 @@ This document summarizes the Streamlit-exposed calculation functions, the multip
 
 ## 9) Care Claim (Full)
 - Class: `CareClaimCalculation`
-- Multiplier methods: Care annualisation + CM-style Table 36 apportionment.
+- Multiplier methods:
+  - Care annualisation + apportionment method selector:
+    - `term_certain_end_minus_start` (Table 36 apportionment baseline).
+    - `discount_factor_to_start_x_term_certain_period` (Table 35 discount-to-start x Table 36 period term, then life scaling).
+  - Impaired override:
+    - `life_expectancy_basis=impaired` + `impaired_multiplier_method=term_certain` uses direct term-certain period (no apportionment scaling).
 - How it works:
   - Compute annualised care cost via `CareCalculation`.
   - Compute period multiplier via `CareMultiplierCalculation`.
   - Total award = annualised cost x period multiplier.
-- Lookups/tables: Table 36.
+- Lookups/tables: Table 36, and Table 35 when discount-factor apportionment method is selected.
 
 ## 10) Care (Split)
 - Class: `CareSplitCalculation` / `CareClaimCalculation.calculate_split`
-- Multiplier methods: Per-phase care annualisation + per-phase Table 36 apportionment.
+- Multiplier methods:
+  - Per-phase care annualisation + per-phase apportionment (default).
+  - Impaired override:
+    - `impaired + term_certain` uses direct term-certain period per phase (no apportionment scaling).
 - How it works:
   - For each phase: annualise care and compute phase multiplier.
   - Compute phase award and aggregate total.
@@ -139,7 +147,10 @@ This document summarizes the Streamlit-exposed calculation functions, the multip
 
 ## 12) Travel Claim (Full)
 - Class: `TravelClaimCalculation`
-- Multiplier methods: Annual travel loss + Table 36 apportionment.
+- Multiplier methods:
+  - Annual travel loss + Table 36 apportionment (default).
+  - Impaired override:
+    - `impaired + term_certain` uses direct term-certain period (no apportionment scaling).
 - How it works:
   - Compute annual travel loss (distance mode, mileage, parking, journey frequency).
   - Compute period multiplier from start/end/life years.
@@ -245,7 +256,9 @@ This document summarizes the Streamlit-exposed calculation functions, the multip
 ## 21) Accommodation (RvJ)
 - Class: `AccommodationRvJCalculation`
 - Multiplier methods:
-  - Ongoing annual line uses Table 36 apportionment scaled by life multiplier.
+  - Ongoing annual line uses Table 36 apportionment scaled by life multiplier (default).
+  - Impaired override:
+    - `impaired + term_certain` uses direct term-certain period for ongoing annual line (no apportionment scaling).
   - Adaptation line uses Table 35 deferment factor.
 - How it works:
   - Compute capital increase and RvJ annual value.

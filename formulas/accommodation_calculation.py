@@ -24,6 +24,8 @@ class AccommodationRvJCalculation:
         betterment: float,
         increased_running_costs: float,
         rate_to_apply: float,
+        use_apportionment: bool = True,
+        apportionment_method: str = "term_certain_end_minus_start",
     ) -> Dict[str, float | List[str]]:
         if age_at_end <= age_at_start:
             raise ValueError("age_at_end must be greater than age_at_start.")
@@ -38,12 +40,19 @@ class AccommodationRvJCalculation:
 
         term_start_years = float(age_at_start - claimant_age)
         term_end_years = float(age_at_end - claimant_age)
-        mult = self.care_multiplier_calculation.apportion_period_multiplier(
-            start_years=term_start_years,
-            end_years=term_end_years,
-            life_expectancy_years=life_expectancy_years,
-            life_multiplier=life_multiplier,
-        )
+        if use_apportionment:
+            mult = self.care_multiplier_calculation.apportion_period_multiplier(
+                start_years=term_start_years,
+                end_years=term_end_years,
+                life_expectancy_years=life_expectancy_years,
+                life_multiplier=life_multiplier,
+                method=apportionment_method,
+            )
+        else:
+            mult = self.care_multiplier_calculation.direct_period_multiplier(
+                start_years=term_start_years,
+                end_years=term_end_years,
+            )
         ongoing_total = float(ongoing_annual * float(mult["period_multiplier"]))
 
         discount_factor = EarningsCalculation._table35_interp(self.table35_vector, max(0.0, term_start_years))

@@ -13,6 +13,7 @@ class CareMultiplierCalculation:
     """
 
     table36_vector: List[float]
+    table35_vector: List[float] | None = None
 
     def _validate_vector(self) -> None:
         if not self.table36_vector:
@@ -61,6 +62,7 @@ class CareMultiplierCalculation:
         end_years: float,
         life_expectancy_years: float,
         life_multiplier: float,
+        method: str = "term_certain_end_minus_start",
     ) -> dict:
         trace: List[str] = []
         if end_years <= start_years:
@@ -70,6 +72,87 @@ class CareMultiplierCalculation:
         if life_multiplier <= 0:
             raise ValueError("life_multiplier must be greater than 0.")
 
+        life_term = self.table36_multiplier(life_expectancy_years, trace=trace)
+
+        if method == "term_certain_end_minus_start":
+            term_start = self.table36_multiplier(start_years, trace=trace)
+            trace.append(
+                f"DEBUG: Multiplier for Term Certain {start_years:.8f} years at 0.50% = {term_start:.8f}"
+            )
+            term_end = self.table36_multiplier(end_years, trace=trace)
+            trace.append(
+                f"DEBUG: Multiplier for Term Certain {end_years:.8f} years at 0.50% = {term_end:.8f}"
+            )
+            trace.append(
+                f"DEBUG: Apply to life multiplier using life expectancy {life_expectancy_years:.8f} years."
+            )
+            period_multiplier = ((term_end - term_start) / life_term) * life_multiplier
+            trace.append(
+                f"DEBUG: (({term_end:.8f} - {term_start:.8f}) / {life_term:.8f}) * {life_multiplier:.8f} = {period_multiplier:.8f}"
+            )
+        elif method == "discount_factor_to_start_x_term_certain_period":
+            if self.table35_vector is None:
+                raise ValueError("table35_vector is required for discount_factor_to_start_x_term_certain_period method.")
+            term_start = self.table36_multiplier(start_years, trace=trace)
+            term_end = self.table36_multiplier(end_years, trace=trace)
+            period_years = float(end_years - start_years)
+            term_period = self.table36_multiplier(period_years, trace=trace)
+            discount_start = self._table35_discount_factor(start_years, trace=trace)
+            trace.append(
+                f"DEBUG: Apply discount factor to start x term certain for period; period_years={period_years:.8f}"
+            )
+            period_multiplier = (discount_start * term_period / life_term) * life_multiplier
+            trace.append(
+                f"DEBUG: ({discount_start:.8f} * {term_period:.8f} / {life_term:.8f}) * {life_multiplier:.8f} = {period_multiplier:.8f}"
+            )
+        else:
+            raise ValueError("method must be term_certain_end_minus_start or discount_factor_to_start_x_term_certain_period.")
+
+        return {
+            "term_multiplier_start": term_start,
+            "term_multiplier_end": term_end,
+            "term_multiplier_life_expectancy": life_term,
+            "period_multiplier": period_multiplier,
+            "trace": trace,
+        }
+
+    def _table35_discount_factor(self, years: float, trace: List[str] | None = None) -> float:
+        if self.table35_vector is None:
+            raise ValueError("table35_vector is not configured.")
+        if years < 0:
+            raise ValueError("years must be greater than or equal to 0 for Table 35 interpolation.")
+        if years == 0:
+            if trace is not None:
+                trace.append("DEBUG: Table 35 - 0 years at 0.50%: 1.00000000")
+            return 1.0
+        if years < 1.0:
+            lo, hi = 0, 1
+            vlo, vhi = 1.0, float(self.table35_vector[0])
+        else:
+            lo = int(math.floor(years))
+            hi = lo + 1
+            if hi > len(self.table35_vector):
+                raise ValueError(f"Table 35 vector too short for {years} years; need entry for year {hi}.")
+            vlo = float(self.table35_vector[lo - 1])
+            vhi = float(self.table35_vector[hi - 1])
+        out = ((hi - years) * vlo) + ((years - lo) * vhi)
+        if trace is not None:
+            trace.append(f"DEBUG: Table 35 - {lo} years at 0.50%: {vlo:.8f}")
+            trace.append(f"DEBUG: Table 35 - {hi} years at 0.50%: {vhi:.8f}")
+            trace.append(f"DEBUG: Interpolate between {lo} and {hi}")
+            trace.append(
+                f"DEBUG: ({hi}-{years:.8f})*{vlo:.8f} + ({years:.8f}-{lo})*{vhi:.8f} = {out:.8f}"
+            )
+        return out
+
+    def direct_period_multiplier(
+        self,
+        start_years: float,
+        end_years: float,
+    ) -> dict:
+        trace: List[str] = []
+        if end_years <= start_years:
+            raise ValueError("end_years must be greater than start_years.")
         term_start = self.table36_multiplier(start_years, trace=trace)
         trace.append(
             f"DEBUG: Multiplier for Term Certain {start_years:.8f} years at 0.50% = {term_start:.8f}"
@@ -78,20 +161,14 @@ class CareMultiplierCalculation:
         trace.append(
             f"DEBUG: Multiplier for Term Certain {end_years:.8f} years at 0.50% = {term_end:.8f}"
         )
-
-        life_term = self.table36_multiplier(life_expectancy_years, trace=trace)
+        period_multiplier = term_end - term_start
         trace.append(
-            f"DEBUG: Apply to life multiplier using life expectancy {life_expectancy_years:.8f} years."
+            f"DEBUG: Direct term_certain period multiplier = {term_end:.8f} - {term_start:.8f} = {period_multiplier:.8f}"
         )
-        period_multiplier = ((term_end - term_start) / life_term) * life_multiplier
-        trace.append(
-            f"DEBUG: (({term_end:.8f} - {term_start:.8f}) / {life_term:.8f}) * {life_multiplier:.8f} = {period_multiplier:.8f}"
-        )
-
         return {
             "term_multiplier_start": term_start,
             "term_multiplier_end": term_end,
-            "term_multiplier_life_expectancy": life_term,
+            "term_multiplier_life_expectancy": 0.0,
             "period_multiplier": period_multiplier,
             "trace": trace,
         }

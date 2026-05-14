@@ -17,6 +17,7 @@ class ContinuousMultiplierCalculation:
     """
 
     table36_vector: List[float]
+    table35_vector: List[float] | None = None
 
     def calculate(
         self,
@@ -28,6 +29,8 @@ class ContinuousMultiplierCalculation:
         end_age: float | None = None,
         start_at_calculation_age: bool = False,
         end_at_rest_of_life: bool = False,
+        use_apportionment: bool = True,
+        apportionment_method: str = "term_certain_end_minus_start",
     ) -> dict:
         if calculation_age <= 0:
             raise ValueError("calculation_age must be greater than 0.")
@@ -61,12 +64,20 @@ class ContinuousMultiplierCalculation:
         if end_years <= start_years:
             raise ValueError("end period must be greater than start period.")
 
-        apportion = CareMultiplierCalculation(self.table36_vector).apportion_period_multiplier(
-            start_years=start_years,
-            end_years=end_years,
-            life_expectancy_years=life_expectancy_years,
-            life_multiplier=float(life_multiplier),
-        )
+        cm = CareMultiplierCalculation(self.table36_vector, table35_vector=self.table35_vector)
+        if use_apportionment:
+            apportion = cm.apportion_period_multiplier(
+                start_years=start_years,
+                end_years=end_years,
+                life_expectancy_years=life_expectancy_years,
+                life_multiplier=float(life_multiplier),
+                method=apportionment_method,
+            )
+        else:
+            apportion = cm.direct_period_multiplier(
+                start_years=start_years,
+                end_years=end_years,
+            )
         trace = list(apportion["trace"])
         if (not end_at_rest_of_life) and (end_age is not None) and float(end_age) > float(life_expectancy_age):
             trace.insert(

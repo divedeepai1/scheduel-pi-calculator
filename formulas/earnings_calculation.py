@@ -349,7 +349,20 @@ class EarningsCalculation:
                 if (
                     impairment_end_age is not None
                     and impairment_end_age <= retirement_age
-                    and impaired_multiplier_method in {"find_appropriate_age", "term_certain"}
+                    and impaired_multiplier_method == "term_certain"
+                ):
+                    # Doc parity: impaired + term_certain uses direct Table 36 split
+                    # (no life/retirement apportionment scaling).
+                    period_multiplier = term_slice
+                    trace.append(
+                        "DEBUG: Impaired term_certain direct period multiplier = "
+                        f"Table36({end_years_from_trial:.8f}) - Table36({start_years_from_trial:.8f}) = "
+                        f"{term_at_end:.8f} - {term_at_start:.8f} = {period_multiplier:.8f}"
+                    )
+                elif (
+                    impairment_end_age is not None
+                    and impairment_end_age <= retirement_age
+                    and impaired_multiplier_method == "find_appropriate_age"
                 ):
                     impairment_years_from_trial = max(0.0, impairment_end_age - claimant_age)
                     term_at_impairment = self._table36_interp(impairment_years_from_trial)

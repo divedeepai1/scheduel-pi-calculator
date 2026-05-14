@@ -30,6 +30,7 @@ class VehicleCalculation:
         increased_insurance: float,
         increased_running_costs: float,
         purchase_mortality_mode: str = "no_mortality",
+        annual_use_apportionment: bool = True,
     ) -> Dict[str, float | int | List[float] | List[str]]:
         trace: List[str] = []
         if not self.table35_vector or not self.table36_vector:
@@ -110,7 +111,10 @@ class VehicleCalculation:
         m_start = self._table36_multiplier(start_years, trace)
         m_end = self._table36_multiplier(end_years, trace)
         m_life = self._table36_multiplier(life_expectancy_years, trace)
-        annual_multiplier = ((m_end - m_start) / m_life) * life_multiplier
+        if annual_use_apportionment:
+            annual_multiplier = ((m_end - m_start) / m_life) * life_multiplier
+        else:
+            annual_multiplier = (m_end - m_start)
         insurance_total = increased_insurance * annual_multiplier
         running_total = increased_running_costs * annual_multiplier
         annual_extras_total = annual_extras * annual_multiplier
@@ -122,7 +126,10 @@ class VehicleCalculation:
         trace.append(f"DEBUG: Purchase Mortality Mode = {purchase_mortality_mode}")
         trace.append(f"DEBUG: Initial Total = {initial_net_cost:.8f} * {initial_multiplier:.8f} = {initial_total:.8f}")
         trace.append(f"DEBUG: Replacements Total = {replacement_net_cost:.8f} * {replacements_multiplier:.8f} = {replacements_total:.8f}")
-        trace.append(f"DEBUG: Annual Extras Multiplier = (({m_end:.8f}-{m_start:.8f})/{m_life:.8f})*{life_multiplier:.8f} = {annual_multiplier:.8f}")
+        if annual_use_apportionment:
+            trace.append(f"DEBUG: Annual Extras Multiplier = (({m_end:.8f}-{m_start:.8f})/{m_life:.8f})*{life_multiplier:.8f} = {annual_multiplier:.8f}")
+        else:
+            trace.append(f"DEBUG: Annual Extras Direct term_certain Multiplier = {m_end:.8f} - {m_start:.8f} = {annual_multiplier:.8f}")
         trace.append(f"DEBUG: Insurance Total = {increased_insurance:.8f} * {annual_multiplier:.8f} = {insurance_total:.8f}")
         trace.append(f"DEBUG: Running Costs Total = {increased_running_costs:.8f} * {annual_multiplier:.8f} = {running_total:.8f}")
         trace.append(f"DEBUG: Total Loss = {initial_total:.8f} + {replacements_total:.8f} + {annual_extras_total:.8f} = {total_loss:.8f}")

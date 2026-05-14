@@ -34,6 +34,8 @@ class LifetimeSplitCalculation:
         start_at_calculation_age: bool = True,
         start_age: float | None = None,
         cap_end_to_life_expectancy: bool = True,
+        use_apportionment: bool = True,
+        apportionment_method: str = "term_certain_end_minus_start",
     ) -> dict:
         if calculation_age <= 0:
             raise ValueError("calculation_age must be greater than 0.")
@@ -86,6 +88,8 @@ class LifetimeSplitCalculation:
                     end_age=end_age,
                     start_at_calculation_age=False,
                     end_at_rest_of_life=False,
+                    use_apportionment=use_apportionment,
+                    apportionment_method=apportionment_method,
                 )
                 period_multiplier = float(cm["period_multiplier"])
                 cm_trace = list(cm["trace"])

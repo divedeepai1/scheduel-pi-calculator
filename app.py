@@ -3,7 +3,7 @@ import json
 import math
 from datetime import date
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
 from formulas.ashe_loader import load_ashe_row, load_ashe_row_by_prefix
@@ -73,6 +73,40 @@ def _load_table36_vector(csv_path: str) -> List[float]:
     if not vector:
         raise ValueError(f"No numeric Table 36 values found in {csv_path}.")
     return vector
+
+
+def _table36_interp_from_vector(vector: List[float], years: float) -> float:
+    y = max(0.0, float(years))
+    lo = int(math.floor(y))
+    hi = int(math.ceil(y))
+    lo = max(0, min(lo, len(vector) - 1))
+    hi = max(0, min(hi, len(vector) - 1))
+    if lo == hi:
+        return float(vector[lo])
+    vlo = float(vector[lo])
+    vhi = float(vector[hi])
+    return (hi - y) * vlo + (y - lo) * vhi
+
+
+def _impaired_life_anchor(
+    *,
+    gender: str,
+    remaining_life_years: float,
+    method: str,
+    table36_csv: str,
+) -> float:
+    m = str(method).strip().lower()
+    if m == "term_certain":
+        vec = _load_table36_vector(table36_csv)
+        return _table36_interp_from_vector(vec, float(remaining_life_years))
+    add_zero = "data/ogden8_additional_males_0.csv" if str(gender).lower() == "male" else "data/ogden8_additional_females_0.csv"
+    add_p5 = "data/ogden8_additional_males_05.csv" if str(gender).lower() == "male" else "data/ogden8_additional_females_05.csv"
+    _, anchor = VehicleCalculation.derive_anchor_from_remaining_life(
+        zero_csv=add_zero,
+        point5_csv=add_p5,
+        remaining_life_years=float(remaining_life_years),
+    )
+    return float(anchor)
 
 
 def _load_whole_life_table(csv_path: str) -> List[Tuple[float, float]]:
@@ -163,7 +197,47 @@ def _resolve_ashe_table14_workbook_path(year: int, table_label: str, cv_variant:
     return str(path).replace("\\", "/")
 
 
-def _base_inputs(key_prefix: str) -> Dict[str, float]:
+def _load_care_rate_mapping(csv_path: str) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    with open(csv_path, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                rows.append(
+                    {
+                        "effective_date": date.fromisoformat(str(row["effective_date"]).strip()),
+                        "aggregate_rate": float(row["aggregate_rate"]),
+                        "basic_rate": float(row["basic_rate"]),
+                        "evening_rate": float(row["evening_rate"]),
+                        "weekend_rate": float(row["weekend_rate"]),
+                        "saturday_rate": float(row["saturday_rate"]),
+                        "sunday_rate": float(row["sunday_rate"]),
+                        "aggregate_day_rate": float(row["aggregate_day_rate"]),
+                    }
+                )
+            except Exception:
+                continue
+    rows.sort(key=lambda r: r["effective_date"])
+    return rows
+
+
+def _resolve_care_rate_row(as_of: date, csv_path: str = "data/care_rate_mapping.csv") -> Optional[Dict[str, Any]]:
+    p = Path(csv_path)
+    if not p.exists():
+        return None
+    rows = _load_care_rate_mapping(str(p))
+    if not rows:
+        return None
+    selected = None
+    for row in rows:
+        if row["effective_date"] <= as_of:
+            selected = row
+        else:
+            break
+    return selected or rows[0]
+
+
+def _base_inputs(key_prefix: str, calculation_date_for_rates: Optional[date] = None) -> Dict[str, float]:
     is_claim_defaults = key_prefix == "claim"
     default_rate_value = 16.62 if is_claim_defaults else 12.69
     default_rate_index = 0 if is_claim_defaults else 1
@@ -222,9 +296,49 @@ def _base_inputs(key_prefix: str) -> Dict[str, float]:
             format_func=lambda v: rate_type_display.get(v, v),
         )
     with col3:
-        rate_value = st.number_input(
-            "Rate to Use", value=default_rate_value, min_value=0.0, step=0.01, format="%.4f", key=f"{key_prefix}_rate_value"
-        )
+        care_rate_date = calculation_date_for_rates or date.today()
+        mapped_row = _resolve_care_rate_row(care_rate_date)
+        mapped_lookup = {
+            "Aggregate_Rate": "aggregate_rate",
+            "Basic_Rate": "basic_rate",
+            "Evening_Rate": "evening_rate",
+            "Weekend_Rate": "weekend_rate",
+            "Saturday_Rate": "saturday_rate",
+            "Sunday_Rate": "sunday_rate",
+            "Aggregate_Day_Rate": "aggregate_day_rate",
+        }
+        use_mapped_rate = False
+        if mapped_row is not None and care_rate_type != "Specify_Rate":
+            use_mapped_rate = st.checkbox(
+                "Use mapped care rate",
+                value=True,
+                key=f"{key_prefix}_use_mapped_rate",
+            )
+            st.caption(
+                f"Mapped row effective from {mapped_row['effective_date'].isoformat()} (as of {care_rate_date.isoformat()})"
+            )
+        rate_value_key = f"{key_prefix}_rate_value"
+        if mapped_row is not None and care_rate_type != "Specify_Rate" and use_mapped_rate:
+            mapped_field = mapped_lookup.get(care_rate_type)
+            if mapped_field is not None:
+                st.session_state[rate_value_key] = float(mapped_row[mapped_field])
+        if rate_value_key in st.session_state:
+            rate_value = st.number_input(
+                "Rate to Use",
+                min_value=0.0,
+                step=0.01,
+                format="%.4f",
+                key=rate_value_key,
+            )
+        else:
+            rate_value = st.number_input(
+                "Rate to Use",
+                value=default_rate_value,
+                min_value=0.0,
+                step=0.01,
+                format="%.4f",
+                key=rate_value_key,
+            )
         include_public_holidays = st.checkbox(
             "Include Public Holidays", value=True, key=f"{key_prefix}_include_holidays"
         )
@@ -315,6 +429,14 @@ def _date_input(label: str, **kwargs):
     if "max_value" not in kwargs:
         kwargs["max_value"] = DATE_MAX
     return st.date_input(label, **kwargs)
+
+
+def _next_tax_year_boundary(d: date) -> date:
+    """Return next UK tax-year boundary date (6 April) after d."""
+    boundary_this_year = date(d.year, 4, 6)
+    if d < boundary_this_year:
+        return boundary_this_year
+    return date(d.year + 1, 4, 6)
 
 
 @st.cache_data(show_spinner=False)
@@ -582,6 +704,7 @@ elif selected_function == "Continuous Multiplier (CM)":
     g1, g2, g3 = st.columns(3)
     impaired_end_age = None
     years_reduction = None
+    claim_imp_method = "find_appropriate_age"
     derived_life_expectancy_end_age = None
     with g1:
         le_input_mode = st.selectbox(
@@ -624,20 +747,60 @@ elif selected_function == "Continuous Multiplier (CM)":
                 index=0,
                 key="cm_le_basis",
             )
+            cm_bf_le_basis = "standard"
+            cm_bf_imp_live_until_age = 0.0
+            cm_bf_multiplier_method = "term_certain"
+            impaired_multiplier_method = "find_appropriate_age"
             if life_expectancy_basis != "standard":
                 impairment_input_type = st.selectbox(
                     "Impairment Input Type",
-                    ["end_age", "years_reduction"],
+                    ["live_until_age"],
                     index=0,
                     key="cm_impairment_type",
+                    format_func=lambda v: "Live Until (Years Old)",
                 )
-                if impairment_input_type == "end_age":
+                impaired_multiplier_method = st.selectbox(
+                    "Impaired Multiplier Method",
+                    ["find_appropriate_age", "term_certain"],
+                    index=0,
+                    key="cm_imp_method",
+                )
+                if impairment_input_type == "live_until_age":
                     impaired_end_age = st.number_input(
-                        "Impaired End Age",
+                        "Impairment (Live Until Age)",
                         value=80.00,
                         step=0.01,
                         format="%.2f",
                         key="cm_impaired_end_age",
+                    )
+                st.markdown("**But For Life Expectancy**")
+                cm_bf_le_basis = st.selectbox(
+                    "But For Life Expectancy",
+                    ["standard", "impaired"],
+                    index=0,
+                    key="cm_bf_le_basis",
+                    format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+                )
+                if cm_bf_le_basis == "impaired":
+                    _ = st.selectbox(
+                        "But For Impairment Input Type",
+                        ["live_until_age"],
+                        index=0,
+                        key="cm_bf_imp_type",
+                        format_func=lambda v: "Live Until (Years Old)",
+                    )
+                    cm_bf_imp_live_until_age = st.number_input(
+                        "But For Impairment (Live Until Age)",
+                        value=0.0,
+                        step=0.01,
+                        format="%.2f",
+                        key="cm_bf_imp_live_until_age",
+                    )
+                    cm_bf_multiplier_method = st.selectbox(
+                        "But For Multiplier Method",
+                        ["term_certain", "find_appropriate_age"],
+                        index=0,
+                        key="cm_bf_imp_method",
                     )
                 else:
                     years_reduction = st.number_input(
@@ -664,6 +827,17 @@ elif selected_function == "Continuous Multiplier (CM)":
             format="%.4f",
             key="cm_life_mult_override",
         )
+        cm_apportion_method = st.selectbox(
+            "Apportioning Future Loss Method",
+            ["term_certain_end_minus_start", "discount_factor_to_start_x_term_certain_period"],
+            index=0,
+            key="cm_apportion_method",
+            format_func=lambda v: (
+                "Term Certain Multiplier at End - Term Certain Multiplier at Start"
+                if v == "term_certain_end_minus_start"
+                else "Discount Factor to Start x Multiplier Term Certain for Period"
+            ),
+        )
 
     st.markdown("#### Loss Configuration")
     c1, c2 = st.columns(2)
@@ -677,6 +851,7 @@ elif selected_function == "Continuous Multiplier (CM)":
     st.markdown("#### Data Sources")
     paths = resolve_ogden_paths(gender="male", discount_rate=0.5, retirement_age=68)
     table36_csv = st.text_input("Table36 CSV Path", value=str(paths.table36_csv), key="cm_table36_csv")
+    table35_csv = st.text_input("Table35 CSV Path", value=str(paths.table35_csv), key="cm_table35_csv")
     male_whole_life_csv = st.text_input("Male Whole Life CSV", value=str(paths.whole_life_csv), key="cm_male_whole_csv")
     female_paths = resolve_ogden_paths(gender="female", discount_rate=0.5, retirement_age=68)
     female_whole_life_csv = st.text_input("Female Whole Life CSV", value=str(female_paths.whole_life_csv), key="cm_female_whole_csv")
@@ -702,10 +877,11 @@ elif selected_function == "Continuous Multiplier (CM)":
                         effective_life_expectancy_years = float(standard_remaining_life) - float(years_reduction or 0.0)
                     if effective_life_expectancy_years <= 0:
                         raise ValueError("Impaired life expectancy years must be greater than 0.")
-                    _, derived_anchor = VehicleCalculation.derive_anchor_from_remaining_life(
-                        zero_csv=add_zero,
-                        point5_csv=add_p5,
-                        remaining_life_years=effective_life_expectancy_years,
+                    derived_anchor = _impaired_life_anchor(
+                        gender=str(gender),
+                        remaining_life_years=float(effective_life_expectancy_years),
+                        method=str(impaired_multiplier_method),
+                        table36_csv=str(table36_csv),
                     )
                 derived_life_expectancy_end_age = float(calculation_age + effective_life_expectancy_years)
                 life_expectancy_age = float(derived_life_expectancy_end_age)
@@ -725,7 +901,10 @@ elif selected_function == "Continuous Multiplier (CM)":
                     )
                     life_multiplier = wl.multiplier(claimant_age=float(calculation_age), gender=str(gender))
 
-            calc = ContinuousMultiplierCalculation(table36_vector=_load_table36_vector(table36_csv))
+            calc = ContinuousMultiplierCalculation(
+                table36_vector=_load_table36_vector(table36_csv),
+                table35_vector=_load_table36_vector(table35_csv),
+            )
             result = calc.calculate(
                 calculation_age=float(calculation_age),
                 life_expectancy_age=float(life_expectancy_age),
@@ -734,6 +913,12 @@ elif selected_function == "Continuous Multiplier (CM)":
                 end_age=(None if end_mode == "Rest of Life" else float(end_age)),
                 start_at_calculation_age=(start_mode == "Age at Calculation"),
                 end_at_rest_of_life=(end_mode == "Rest of Life"),
+                use_apportionment=not (
+                    le_input_mode == "derived_from_dates"
+                    and life_expectancy_basis == "impaired"
+                    and str(impaired_multiplier_method) == "term_certain"
+                ),
+                apportionment_method=str(cm_apportion_method),
             )
             st.success(SUCCESS_MSG)
             st.write(f"Life Multiplier: {result['life_multiplier']:.8f}")
@@ -769,7 +954,13 @@ elif selected_function == "Care Annualisation":
         age_at_start = None
         age_at_end = None
 
-    payload = _base_inputs("annual")
+    annual_rate_date = None
+    if mode == "Date" and start_date is not None:
+        try:
+            annual_rate_date = date.fromisoformat(str(start_date))
+        except Exception:
+            annual_rate_date = None
+    payload = _base_inputs("annual", calculation_date_for_rates=annual_rate_date)
     if st.button("Compute Care Annualisation", use_container_width=True):
         try:
             calc = CareCalculation()
@@ -837,16 +1028,72 @@ elif selected_function == "General Continuous (GC)":
         gender = st.selectbox("Gender", ["male", "female"], key="gc_gender")
         if le_input_mode == "derived_from_dates":
             life_expectancy_basis = st.selectbox("Life Expectancy Basis", ["standard", "impaired"], index=0, key="gc_le_basis")
+            gc_bf_le_basis = "standard"
+            gc_bf_imp_live_until_age = 0.0
+            gc_bf_multiplier_method = "term_certain"
+            gc_imp_method = "find_appropriate_age"
             if life_expectancy_basis != "standard":
-                impairment_input_type = st.selectbox("Impairment Input Type", ["end_age", "years_reduction"], index=0, key="gc_imp_type")
-                if impairment_input_type == "end_age":
-                    impaired_end_age = st.number_input("Impaired End Age", value=80.00, step=0.01, format="%.2f", key="gc_imp_end")
+                impairment_input_type = st.selectbox(
+                    "Impairment Input Type",
+                    ["live_until_age"],
+                    index=0,
+                    key="gc_imp_type",
+                    format_func=lambda v: "Live Until (Years Old)",
+                )
+                gc_imp_method = st.selectbox(
+                    "Impaired Multiplier Method",
+                    ["find_appropriate_age", "term_certain"],
+                    index=0,
+                    key="gc_imp_method",
+                )
+                if impairment_input_type == "live_until_age":
+                    impaired_end_age = st.number_input("Impairment (Live Until Age)", value=80.00, step=0.01, format="%.2f", key="gc_imp_end")
+                st.markdown("**But For Life Expectancy**")
+                gc_bf_le_basis = st.selectbox(
+                    "But For Life Expectancy",
+                    ["standard", "impaired"],
+                    index=0,
+                    key="gc_bf_le_basis",
+                    format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+                )
+                if gc_bf_le_basis == "impaired":
+                    _ = st.selectbox(
+                        "But For Impairment Input Type",
+                        ["live_until_age"],
+                        index=0,
+                        key="gc_bf_imp_type",
+                        format_func=lambda v: "Live Until (Years Old)",
+                    )
+                    gc_bf_imp_live_until_age = st.number_input(
+                        "But For Impairment (Live Until Age)",
+                        value=0.0,
+                        step=0.01,
+                        format="%.2f",
+                        key="gc_bf_imp_live_until_age",
+                    )
+                    gc_bf_multiplier_method = st.selectbox(
+                        "But For Multiplier Method",
+                        ["term_certain", "find_appropriate_age"],
+                        index=0,
+                        key="gc_bf_imp_method",
+                    )
                 else:
                     years_reduction = st.number_input("Years Reduction", value=4.69, step=0.01, format="%.2f", key="gc_years_reduction")
         else:
             life_expectancy_years = st.number_input("Life Expectancy Years", value=19.67, step=0.01, format="%.2f", key="gc_le_years")
     with g3:
         life_multiplier_override = st.number_input("Life Multiplier Override (optional)", value=0.0, step=0.0001, format="%.4f", key="gc_lm_override")
+        gc_apportion_method = st.selectbox(
+            "Apportioning Future Loss Method",
+            ["term_certain_end_minus_start", "discount_factor_to_start_x_term_certain_period"],
+            index=0,
+            key="gc_apportion_method",
+            format_func=lambda v: (
+                "Term Certain Multiplier at End - Term Certain Multiplier at Start"
+                if v == "term_certain_end_minus_start"
+                else "Discount Factor to Start x Multiplier Term Certain for Period"
+            ),
+        )
 
     st.markdown("#### Loss Configuration")
     c1, c2, c3 = st.columns(3)
@@ -863,6 +1110,7 @@ elif selected_function == "General Continuous (GC)":
     st.markdown("#### Data Sources")
     paths = resolve_ogden_paths(gender="male", discount_rate=0.5, retirement_age=68)
     table36_csv = st.text_input("Table36 CSV Path", value=str(paths.table36_csv), key="gc_table36_csv")
+    table35_csv = st.text_input("Table35 CSV Path", value=str(paths.table35_csv), key="gc_table35_csv")
     male_whole_life_csv = st.text_input("Male Whole Life CSV", value=str(paths.whole_life_csv), key="gc_male_whole_csv")
     female_paths = resolve_ogden_paths(gender="female", discount_rate=0.5, retirement_age=68)
     female_whole_life_csv = st.text_input("Female Whole Life CSV", value=str(female_paths.whole_life_csv), key="gc_female_whole_csv")
@@ -888,10 +1136,11 @@ elif selected_function == "General Continuous (GC)":
                         effective_life_expectancy_years = float(standard_remaining_life) - float(years_reduction or 0.0)
                     if effective_life_expectancy_years <= 0:
                         raise ValueError("Impaired life expectancy years must be greater than 0.")
-                    _, derived_anchor = VehicleCalculation.derive_anchor_from_remaining_life(
-                        zero_csv=add_zero,
-                        point5_csv=add_p5,
-                        remaining_life_years=effective_life_expectancy_years,
+                    derived_anchor = _impaired_life_anchor(
+                        gender=str(gender),
+                        remaining_life_years=float(effective_life_expectancy_years),
+                        method=str(gc_imp_method),
+                        table36_csv=str(table36_csv),
                     )
                 life_expectancy_age = float(calculation_age + effective_life_expectancy_years)
             else:
@@ -910,7 +1159,10 @@ elif selected_function == "General Continuous (GC)":
                     )
                     life_multiplier = wl.multiplier(claimant_age=float(calculation_age), gender=str(gender))
 
-            cm_calc = ContinuousMultiplierCalculation(table36_vector=_load_table36_vector(table36_csv))
+            cm_calc = ContinuousMultiplierCalculation(
+                table36_vector=_load_table36_vector(table36_csv),
+                table35_vector=_load_table36_vector(table35_csv),
+            )
             gc_calc = GeneralContinuousCalculation(cm_calculation=cm_calc)
             result = gc_calc.calculate(
                 loss_amount=float(loss_amount),
@@ -922,6 +1174,12 @@ elif selected_function == "General Continuous (GC)":
                 end_age=(None if end_mode == "Rest of Life" else float(end_age)),
                 start_at_calculation_age=(start_mode == "Age at Calculation"),
                 end_at_rest_of_life=(end_mode == "Rest of Life"),
+                use_apportionment=not (
+                    le_input_mode == "derived_from_dates"
+                    and life_expectancy_basis == "impaired"
+                    and str(gc_imp_method) == "term_certain"
+                ),
+                apportionment_method=str(gc_apportion_method),
             )
             st.success(SUCCESS_MSG)
             st.write(f"Annual Loss: {result['annual_loss']:.8f}")
@@ -965,16 +1223,72 @@ elif selected_function == "General Continuous (But For) (GCBF)":
         gender = st.selectbox("Gender", ["male", "female"], key="gcbf_gender")
         if le_input_mode == "derived_from_dates":
             life_expectancy_basis = st.selectbox("Life Expectancy Basis", ["standard", "impaired"], index=0, key="gcbf_le_basis")
+            gcbf_bf_le_basis = "standard"
+            gcbf_bf_imp_live_until_age = 0.0
+            gcbf_bf_multiplier_method = "term_certain"
+            gcbf_imp_method = "find_appropriate_age"
             if life_expectancy_basis != "standard":
-                impairment_input_type = st.selectbox("Impairment Input Type", ["end_age", "years_reduction"], index=0, key="gcbf_imp_type")
-                if impairment_input_type == "end_age":
-                    impaired_end_age = st.number_input("Impaired End Age", value=80.00, step=0.01, format="%.2f", key="gcbf_imp_end")
+                impairment_input_type = st.selectbox(
+                    "Impairment Input Type",
+                    ["live_until_age"],
+                    index=0,
+                    key="gcbf_imp_type",
+                    format_func=lambda v: "Live Until (Years Old)",
+                )
+                gcbf_imp_method = st.selectbox(
+                    "Impaired Multiplier Method",
+                    ["find_appropriate_age", "term_certain"],
+                    index=0,
+                    key="gcbf_imp_method",
+                )
+                if impairment_input_type == "live_until_age":
+                    impaired_end_age = st.number_input("Impairment (Live Until Age)", value=80.00, step=0.01, format="%.2f", key="gcbf_imp_end")
+                st.markdown("**But For Life Expectancy**")
+                gcbf_bf_le_basis = st.selectbox(
+                    "But For Life Expectancy",
+                    ["standard", "impaired"],
+                    index=0,
+                    key="gcbf_bf_le_basis",
+                    format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+                )
+                if gcbf_bf_le_basis == "impaired":
+                    _ = st.selectbox(
+                        "But For Impairment Input Type",
+                        ["live_until_age"],
+                        index=0,
+                        key="gcbf_bf_imp_type",
+                        format_func=lambda v: "Live Until (Years Old)",
+                    )
+                    gcbf_bf_imp_live_until_age = st.number_input(
+                        "But For Impairment (Live Until Age)",
+                        value=0.0,
+                        step=0.01,
+                        format="%.2f",
+                        key="gcbf_bf_imp_live_until_age",
+                    )
+                    gcbf_bf_multiplier_method = st.selectbox(
+                        "But For Multiplier Method",
+                        ["term_certain", "find_appropriate_age"],
+                        index=0,
+                        key="gcbf_bf_imp_method",
+                    )
                 else:
                     years_reduction = st.number_input("Years Reduction", value=4.69, step=0.01, format="%.2f", key="gcbf_years_reduction")
         else:
             life_expectancy_years = st.number_input("Life Expectancy Years", value=19.67, step=0.01, format="%.2f", key="gcbf_le_years")
     with g3:
         life_multiplier_override = st.number_input("Life Multiplier Override (optional)", value=0.0, step=0.0001, format="%.4f", key="gcbf_lm_override")
+        gcbf_apportion_method = st.selectbox(
+            "Apportioning Future Loss Method",
+            ["term_certain_end_minus_start", "discount_factor_to_start_x_term_certain_period"],
+            index=0,
+            key="gcbf_apportion_method",
+            format_func=lambda v: (
+                "Term Certain Multiplier at End - Term Certain Multiplier at Start"
+                if v == "term_certain_end_minus_start"
+                else "Discount Factor to Start x Multiplier Term Certain for Period"
+            ),
+        )
 
     st.markdown("#### Loss Configuration")
     c1, c2, c3 = st.columns(3)
@@ -993,6 +1307,7 @@ elif selected_function == "General Continuous (But For) (GCBF)":
     st.markdown("#### Data Sources")
     paths = resolve_ogden_paths(gender="male", discount_rate=0.5, retirement_age=68)
     table36_csv = st.text_input("Table36 CSV Path", value=str(paths.table36_csv), key="gcbf_table36_csv")
+    table35_csv = st.text_input("Table35 CSV Path", value=str(paths.table35_csv), key="gcbf_table35_csv")
     male_whole_life_csv = st.text_input("Male Whole Life CSV", value=str(paths.whole_life_csv), key="gcbf_male_whole_csv")
     female_paths = resolve_ogden_paths(gender="female", discount_rate=0.5, retirement_age=68)
     female_whole_life_csv = st.text_input("Female Whole Life CSV", value=str(female_paths.whole_life_csv), key="gcbf_female_whole_csv")
@@ -1018,10 +1333,11 @@ elif selected_function == "General Continuous (But For) (GCBF)":
                         effective_life_expectancy_years = float(standard_remaining_life) - float(years_reduction or 0.0)
                     if effective_life_expectancy_years <= 0:
                         raise ValueError("Impaired life expectancy years must be greater than 0.")
-                    _, derived_anchor = VehicleCalculation.derive_anchor_from_remaining_life(
-                        zero_csv=add_zero,
-                        point5_csv=add_p5,
-                        remaining_life_years=effective_life_expectancy_years,
+                    derived_anchor = _impaired_life_anchor(
+                        gender=str(gender),
+                        remaining_life_years=float(effective_life_expectancy_years),
+                        method=str(gcbf_imp_method),
+                        table36_csv=str(table36_csv),
                     )
                 life_expectancy_age = float(calculation_age + effective_life_expectancy_years)
             else:
@@ -1040,7 +1356,10 @@ elif selected_function == "General Continuous (But For) (GCBF)":
                     )
                     life_multiplier = wl.multiplier(claimant_age=float(calculation_age), gender=str(gender))
 
-            cm_calc = ContinuousMultiplierCalculation(table36_vector=_load_table36_vector(table36_csv))
+            cm_calc = ContinuousMultiplierCalculation(
+                table36_vector=_load_table36_vector(table36_csv),
+                table35_vector=_load_table36_vector(table35_csv),
+            )
             gcbf_calc = GeneralContinuousButForCalculation(cm_calculation=cm_calc)
             result = gcbf_calc.calculate(
                 cost_prior=float(cost_prior),
@@ -1054,6 +1373,12 @@ elif selected_function == "General Continuous (But For) (GCBF)":
                 end_age=(None if end_mode == "Rest of Life" else float(end_age)),
                 start_at_calculation_age=(start_mode == "Age at Calculation"),
                 end_at_rest_of_life=(end_mode == "Rest of Life"),
+                use_apportionment=not (
+                    le_input_mode == "derived_from_dates"
+                    and life_expectancy_basis == "impaired"
+                    and str(gcbf_imp_method) == "term_certain"
+                ),
+                apportionment_method=str(gcbf_apportion_method),
             )
             st.success(SUCCESS_MSG)
             st.write(f"Annual Prior: {result['annual_prior']:.8f}")
@@ -1098,11 +1423,32 @@ elif selected_function == "General One Off (GOF)":
         if le_input_mode == "derived_from_dates":
             life_expectancy_basis = st.selectbox("Life Expectancy Basis", ["standard", "impaired"], index=0, key="gof_le_basis")
             if life_expectancy_basis == "impaired":
-                impairment_input_type = st.selectbox("Impairment Input Type", ["end_age", "years_reduction"], index=0, key="gof_imp_type")
-                if impairment_input_type == "end_age":
-                    _ = st.number_input("Impaired End Age", value=80.00, step=0.01, format="%.2f", key="gof_imp_end")
-                else:
-                    _ = st.number_input("Years Reduction", value=4.69, step=0.01, format="%.2f", key="gof_years_reduction")
+                impairment_input_type = st.selectbox(
+                    "Impairment Input Type",
+                    ["live_until_age"],
+                    index=0,
+                    key="gof_imp_type",
+                    format_func=lambda v: "Live Until (Years Old)",
+                )
+                _ = st.number_input("Impairment (Live Until Age)", value=80.00, step=0.01, format="%.2f", key="gof_imp_end")
+                st.markdown("**But For Life Expectancy**")
+                gof_bf_le_basis = st.selectbox(
+                    "But For Life Expectancy",
+                    ["standard", "impaired"],
+                    index=0,
+                    key="gof_bf_le_basis",
+                    format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+                )
+                if gof_bf_le_basis == "impaired":
+                    _ = st.selectbox(
+                        "But For Impairment Input Type",
+                        ["live_until_age"],
+                        index=0,
+                        key="gof_bf_imp_type",
+                        format_func=lambda v: "Live Until (Years Old)",
+                    )
+                    _ = st.number_input("But For Impairment (Live Until Age)", value=0.0, step=0.01, format="%.2f", key="gof_bf_imp_live_until_age")
+                    _ = st.selectbox("But For Multiplier Method", ["term_certain", "find_appropriate_age"], index=0, key="gof_bf_imp_method")
 
     st.markdown("#### Loss Configuration")
     c1, c2 = st.columns(2)
@@ -1156,11 +1502,56 @@ elif selected_function == "General Periodical (GP)":
         gender = st.selectbox("Gender", ["male", "female"], key="gp_gender")
         if le_input_mode == "derived_from_dates":
             life_expectancy_basis = st.selectbox("Life Expectancy Basis", ["standard", "impaired"], index=0, key="gp_le_basis")
+            gp_bf_le_basis = "standard"
+            gp_bf_imp_live_until_age = 0.0
+            gp_bf_multiplier_method = "term_certain"
+            gp_imp_method = "find_appropriate_age"
             if life_expectancy_basis == "impaired":
-                imp_type = st.selectbox("Impairment Input Type", ["end_age", "years_reduction"], index=0, key="gp_imp_type")
-                if imp_type == "end_age":
-                    gp_imp_end = st.number_input("Impaired End Age", value=80.00, step=0.01, format="%.2f", key="gp_imp_end")
+                imp_type = st.selectbox(
+                    "Impairment Input Type",
+                    ["live_until_age"],
+                    index=0,
+                    key="gp_imp_type",
+                    format_func=lambda v: "Live Until (Years Old)",
+                )
+                gp_imp_method = st.selectbox(
+                    "Impaired Multiplier Method",
+                    ["find_appropriate_age", "term_certain"],
+                    index=0,
+                    key="gp_imp_method",
+                )
+                if imp_type == "live_until_age":
+                    gp_imp_end = st.number_input("Impairment (Live Until Age)", value=80.00, step=0.01, format="%.2f", key="gp_imp_end")
                     gp_years_red = None
+                st.markdown("**But For Life Expectancy**")
+                gp_bf_le_basis = st.selectbox(
+                    "But For Life Expectancy",
+                    ["standard", "impaired"],
+                    index=0,
+                    key="gp_bf_le_basis",
+                    format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+                )
+                if gp_bf_le_basis == "impaired":
+                    _ = st.selectbox(
+                        "But For Impairment Input Type",
+                        ["live_until_age"],
+                        index=0,
+                        key="gp_bf_imp_type",
+                        format_func=lambda v: "Live Until (Years Old)",
+                    )
+                    gp_bf_imp_live_until_age = st.number_input(
+                        "But For Impairment (Live Until Age)",
+                        value=0.0,
+                        step=0.01,
+                        format="%.2f",
+                        key="gp_bf_imp_live_until_age",
+                    )
+                    gp_bf_multiplier_method = st.selectbox(
+                        "But For Multiplier Method",
+                        ["term_certain", "find_appropriate_age"],
+                        index=0,
+                        key="gp_bf_imp_method",
+                    )
                 else:
                     gp_years_red = st.number_input("Years Reduction", value=4.69, step=0.01, format="%.2f", key="gp_years_red")
                     gp_imp_end = None
@@ -1223,10 +1614,11 @@ elif selected_function == "General Periodical (GP)":
                     else:
                         remaining_life = float(standard_remaining_life - float(gp_years_red or 0.0))
                         life_expectancy_age = float(calculation_age + remaining_life)
-                    _, derived_anchor = VehicleCalculation.derive_anchor_from_remaining_life(
-                        zero_csv=add_zero,
-                        point5_csv=add_p5,
+                    derived_anchor = _impaired_life_anchor(
+                        gender=str(gender),
                         remaining_life_years=float(remaining_life),
+                        method=str(gp_imp_method),
+                        table36_csv=str(table36_csv),
                     )
             else:
                 calculation_age = float(claimant_age)
@@ -1260,6 +1652,11 @@ elif selected_function == "General Periodical (GP)":
                 start_at_calculation_age=(start_mode == "Age at Calculation"),
                 end_at_rest_of_life=(end_mode == "Rest of Life"),
                 pi_parity_mode=bool(gp_pi_parity),
+                use_mortality_adjustment=not (
+                    le_input_mode == "derived_from_dates"
+                    and life_expectancy_basis == "impaired"
+                    and str(gp_imp_method) == "term_certain"
+                ),
             )
             st.success(SUCCESS_MSG)
             st.write(f"Purchase Count: {result['purchase_count']}")
@@ -1292,11 +1689,56 @@ elif selected_function == "Lifetime (Split) (LS)":
         gender = st.selectbox("Gender", ["male", "female"], key="ls_gender")
         if le_input_mode == "derived_from_dates":
             life_expectancy_basis = st.selectbox("Life Expectancy Basis", ["standard", "impaired"], index=0, key="ls_le_basis")
+            ls_bf_le_basis = "standard"
+            ls_bf_imp_live_until_age = 0.0
+            ls_bf_multiplier_method = "term_certain"
+            ls_imp_method = "find_appropriate_age"
             if life_expectancy_basis == "impaired":
-                ls_imp_type = st.selectbox("Impairment Input Type", ["end_age", "years_reduction"], index=0, key="ls_imp_type")
-                if ls_imp_type == "end_age":
-                    ls_imp_end = st.number_input("Impaired End Age", value=80.0, step=0.01, format="%.2f", key="ls_imp_end")
+                ls_imp_type = st.selectbox(
+                    "Impairment Input Type",
+                    ["live_until_age"],
+                    index=0,
+                    key="ls_imp_type",
+                    format_func=lambda v: "Live Until (Years Old)",
+                )
+                ls_imp_method = st.selectbox(
+                    "Impaired Multiplier Method",
+                    ["find_appropriate_age", "term_certain"],
+                    index=0,
+                    key="ls_imp_method",
+                )
+                if ls_imp_type == "live_until_age":
+                    ls_imp_end = st.number_input("Impairment (Live Until Age)", value=80.0, step=0.01, format="%.2f", key="ls_imp_end")
                     ls_years_red = None
+                st.markdown("**But For Life Expectancy**")
+                ls_bf_le_basis = st.selectbox(
+                    "But For Life Expectancy",
+                    ["standard", "impaired"],
+                    index=0,
+                    key="ls_bf_le_basis",
+                    format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+                )
+                if ls_bf_le_basis == "impaired":
+                    _ = st.selectbox(
+                        "But For Impairment Input Type",
+                        ["live_until_age"],
+                        index=0,
+                        key="ls_bf_imp_type",
+                        format_func=lambda v: "Live Until (Years Old)",
+                    )
+                    ls_bf_imp_live_until_age = st.number_input(
+                        "But For Impairment (Live Until Age)",
+                        value=0.0,
+                        step=0.01,
+                        format="%.2f",
+                        key="ls_bf_imp_live_until_age",
+                    )
+                    ls_bf_multiplier_method = st.selectbox(
+                        "But For Multiplier Method",
+                        ["term_certain", "find_appropriate_age"],
+                        index=0,
+                        key="ls_bf_imp_method",
+                    )
                 else:
                     ls_years_red = st.number_input("Years Reduction", value=4.69, step=0.01, format="%.2f", key="ls_years_red")
                     ls_imp_end = None
@@ -1309,6 +1751,17 @@ elif selected_function == "Lifetime (Split) (LS)":
             ls_years_red = None
     with g3:
         life_multiplier_override = st.number_input("Life Multiplier Override (optional)", value=0.0, step=0.0001, format="%.4f", key="ls_lm_override")
+        ls_apportion_method = st.selectbox(
+            "Apportioning Future Loss Method",
+            ["term_certain_end_minus_start", "discount_factor_to_start_x_term_certain_period"],
+            index=0,
+            key="ls_apportion_method",
+            format_func=lambda v: (
+                "Term Certain Multiplier at End - Term Certain Multiplier at Start"
+                if v == "term_certain_end_minus_start"
+                else "Discount Factor to Start x Multiplier Term Certain for Period"
+            ),
+        )
 
     st.markdown("#### Loss Configuration")
     ls_start_mode = st.selectbox(
@@ -1358,6 +1811,7 @@ elif selected_function == "Lifetime (Split) (LS)":
     st.markdown("#### Data Sources")
     paths = resolve_ogden_paths(gender="male", discount_rate=0.5, retirement_age=68)
     table36_csv = st.text_input("Table36 CSV Path", value=str(paths.table36_csv), key="ls_table36_csv")
+    table35_csv = st.text_input("Table35 CSV Path", value=str(paths.table35_csv), key="ls_table35_csv")
     male_whole_life_csv = st.text_input("Male Whole Life CSV", value=str(paths.whole_life_csv), key="ls_male_whole_csv")
     female_paths = resolve_ogden_paths(gender="female", discount_rate=0.5, retirement_age=68)
     female_whole_life_csv = st.text_input("Female Whole Life CSV", value=str(female_paths.whole_life_csv), key="ls_female_whole_csv")
@@ -1383,10 +1837,11 @@ elif selected_function == "Lifetime (Split) (LS)":
                     else:
                         remaining_life = float(standard_remaining_life - float(ls_years_red or 0.0))
                         life_expectancy_age = float(calculation_age + remaining_life)
-                    _, derived_anchor = VehicleCalculation.derive_anchor_from_remaining_life(
-                        zero_csv=add_zero,
-                        point5_csv=add_p5,
+                    derived_anchor = _impaired_life_anchor(
+                        gender=str(gender),
                         remaining_life_years=float(remaining_life),
+                        method=str(ls_imp_method),
+                        table36_csv=str(table36_csv),
                     )
             else:
                 calculation_age = float(claimant_age)
@@ -1416,7 +1871,10 @@ elif selected_function == "Lifetime (Split) (LS)":
                 periods_payload.append(entry)
 
             calc = LifetimeSplitCalculation(
-                cm_calculation=ContinuousMultiplierCalculation(table36_vector=_load_table36_vector(table36_csv))
+                cm_calculation=ContinuousMultiplierCalculation(
+                    table36_vector=_load_table36_vector(table36_csv),
+                    table35_vector=_load_table36_vector(table35_csv),
+                )
             )
             result = calc.calculate(
                 calculation_age=float(calculation_age),
@@ -1425,6 +1883,12 @@ elif selected_function == "Lifetime (Split) (LS)":
                 periods=periods_payload,
                 start_at_calculation_age=(ls_start_mode == "Age at Calculation"),
                 start_age=(None if ls_start_mode == "Age at Calculation" else float(ls_start_age)),
+                use_apportionment=not (
+                    le_input_mode == "derived_from_dates"
+                    and life_expectancy_basis == "impaired"
+                    and str(ls_imp_method) == "term_certain"
+                ),
+                apportionment_method=str(ls_apportion_method),
             )
             st.success(SUCCESS_MSG)
             for p in result["periods"]:
@@ -1455,11 +1919,56 @@ elif selected_function == "Periodical Multiplier (PM)":
         gender = st.selectbox("Gender", ["male", "female"], key="pm_gender")
         if le_input_mode == "derived_from_dates":
             life_expectancy_basis = st.selectbox("Life Expectancy Basis", ["standard", "impaired"], index=0, key="pm_le_basis")
+            pm_bf_le_basis = "standard"
+            pm_bf_imp_live_until_age = 0.0
+            pm_bf_multiplier_method = "term_certain"
+            pm_imp_method = "find_appropriate_age"
             if life_expectancy_basis == "impaired":
-                pm_imp_type = st.selectbox("Impairment Input Type", ["end_age", "years_reduction"], index=0, key="pm_imp_type")
-                if pm_imp_type == "end_age":
-                    pm_imp_end = st.number_input("Impaired End Age", value=80.0, step=0.01, format="%.2f", key="pm_imp_end")
+                pm_imp_type = st.selectbox(
+                    "Impairment Input Type",
+                    ["live_until_age"],
+                    index=0,
+                    key="pm_imp_type",
+                    format_func=lambda v: "Live Until (Years Old)",
+                )
+                pm_imp_method = st.selectbox(
+                    "Impaired Multiplier Method",
+                    ["find_appropriate_age", "term_certain"],
+                    index=0,
+                    key="pm_imp_method",
+                )
+                if pm_imp_type == "live_until_age":
+                    pm_imp_end = st.number_input("Impairment (Live Until Age)", value=80.0, step=0.01, format="%.2f", key="pm_imp_end")
                     pm_years_red = None
+                st.markdown("**But For Life Expectancy**")
+                pm_bf_le_basis = st.selectbox(
+                    "But For Life Expectancy",
+                    ["standard", "impaired"],
+                    index=0,
+                    key="pm_bf_le_basis",
+                    format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+                )
+                if pm_bf_le_basis == "impaired":
+                    _ = st.selectbox(
+                        "But For Impairment Input Type",
+                        ["live_until_age"],
+                        index=0,
+                        key="pm_bf_imp_type",
+                        format_func=lambda v: "Live Until (Years Old)",
+                    )
+                    pm_bf_imp_live_until_age = st.number_input(
+                        "But For Impairment (Live Until Age)",
+                        value=0.0,
+                        step=0.01,
+                        format="%.2f",
+                        key="pm_bf_imp_live_until_age",
+                    )
+                    pm_bf_multiplier_method = st.selectbox(
+                        "But For Multiplier Method",
+                        ["term_certain", "find_appropriate_age"],
+                        index=0,
+                        key="pm_bf_imp_method",
+                    )
                 else:
                     pm_years_red = st.number_input("Years Reduction", value=4.69, step=0.01, format="%.2f", key="pm_years_red")
                     pm_imp_end = None
@@ -1513,10 +2022,11 @@ elif selected_function == "Periodical Multiplier (PM)":
                     else:
                         remaining_life = float(standard_remaining_life - float(pm_years_red or 0.0))
                         life_expectancy_age = float(calculation_age + remaining_life)
-                    _, derived_anchor = VehicleCalculation.derive_anchor_from_remaining_life(
-                        zero_csv=add_zero,
-                        point5_csv=add_p5,
+                    derived_anchor = _impaired_life_anchor(
+                        gender=str(gender),
                         remaining_life_years=float(remaining_life),
+                        method=str(pm_imp_method),
+                        table36_csv=str(table36_csv),
                     )
             else:
                 calculation_age = float(claimant_age)
@@ -1551,6 +2061,11 @@ elif selected_function == "Periodical Multiplier (PM)":
                 end_at_rest_of_life=(end_mode == "Rest of Life"),
                 loss_amount=float(loss_amount),
                 pi_parity_mode=bool(pm_pi_parity),
+                use_mortality_adjustment=not (
+                    le_input_mode == "derived_from_dates"
+                    and life_expectancy_basis == "impaired"
+                    and str(pm_imp_method) == "term_certain"
+                ),
             )
             st.success(SUCCESS_MSG)
             st.write(f"Purchase Count: {result['purchase_count']}")
@@ -1602,6 +2117,9 @@ elif selected_function == "Care Claim (Full)":
         else:
             life_expectancy_basis = "standard"
     with g3:
+        claim_bf_le_basis = "standard"
+        claim_bf_imp_live_until_age = 0.0
+        claim_bf_multiplier_method = "term_certain"
         if le_input_mode == "manual_years":
             life_expectancy_years = st.number_input(
                 "Life Expectancy Years",
@@ -1610,24 +2128,60 @@ elif selected_function == "Care Claim (Full)":
                 format="%.2f",
                 key="claim_life_expectancy_years",
             )
-            impairment_input_type = "end_age"
+            impairment_input_type = "live_until_age"
         else:
             life_expectancy_years = None
             if life_expectancy_basis == "impaired":
                 impairment_input_type = st.selectbox(
                     "Impairment Input Type",
-                    ["end_age", "years_reduction"],
+                    ["live_until_age"],
                     index=0,
                     key="claim_impairment_input_type",
+                    format_func=lambda v: "Live Until (Years Old)",
                 )
-                if impairment_input_type == "end_age":
+                claim_imp_method = st.selectbox(
+                    "Impaired Multiplier Method",
+                    ["find_appropriate_age", "term_certain"],
+                    index=0,
+                    key="claim_imp_method",
+                )
+                if impairment_input_type == "live_until_age":
                     impaired_end_age = st.number_input(
-                        "Impaired End Age",
+                        "Impairment (Live Until Age)",
                         value=72.00,
                         min_value=0.01,
                         step=0.01,
                         format="%.2f",
                         key="claim_impaired_end_age",
+                    )
+                st.markdown("**But For Life Expectancy**")
+                claim_bf_le_basis = st.selectbox(
+                    "But For Life Expectancy",
+                    ["standard", "impaired"],
+                    index=0,
+                    key="claim_bf_le_basis",
+                    format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+                )
+                if claim_bf_le_basis == "impaired":
+                    _ = st.selectbox(
+                        "But For Impairment Input Type",
+                        ["live_until_age"],
+                        index=0,
+                        key="claim_bf_imp_type",
+                        format_func=lambda v: "Live Until (Years Old)",
+                    )
+                    claim_bf_imp_live_until_age = st.number_input(
+                        "But For Impairment (Live Until Age)",
+                        value=0.0,
+                        step=0.01,
+                        format="%.2f",
+                        key="claim_bf_imp_live_until_age",
+                    )
+                    claim_bf_multiplier_method = st.selectbox(
+                        "But For Multiplier Method",
+                        ["term_certain", "find_appropriate_age"],
+                        index=0,
+                        key="claim_bf_imp_method",
                     )
                 else:
                     years_reduction = st.number_input(
@@ -1639,7 +2193,21 @@ elif selected_function == "Care Claim (Full)":
                         key="claim_years_reduction",
                     )
             else:
-                impairment_input_type = "end_age"
+                impairment_input_type = "live_until_age"
+        claim_apportion_method = st.selectbox(
+            "Apportioning Future Loss Method",
+            [
+                "term_certain_end_minus_start",
+                "discount_factor_to_start_x_term_certain_period",
+            ],
+            index=0,
+            key="claim_apportion_method",
+            format_func=lambda v: (
+                "Term Certain Multiplier at End - Term Certain Multiplier at Start"
+                if v == "term_certain_end_minus_start"
+                else "Discount Factor to Start x Multiplier Term Certain for Period"
+            ),
+        )
 
     st.markdown("#### Care Settings")
     s1, s2 = st.columns(2)
@@ -1674,7 +2242,8 @@ elif selected_function == "Care Claim (Full)":
             disabled=(end_mode == "Rest of Life"),
         )
 
-    payload = _base_inputs("claim")
+    claim_rate_date = calculation_date if le_input_mode == "derived_from_dates" else None
+    payload = _base_inputs("claim", calculation_date_for_rates=claim_rate_date)
 
     st.markdown("#### Manual Overrides")
     m1, m2 = st.columns(2)
@@ -1717,9 +2286,9 @@ elif selected_function == "Care Claim (Full)":
             format="%.2f",
             key="claim_term_end_override",
         )
-
     st.markdown("#### CSV Used")
     table36_csv = st.text_input("Table36 CSV Path", value="data/ogden8table36dr05.csv", key="claim_table36_csv")
+    table35_csv = st.text_input("Table35 CSV Path", value="data/ogden8table35dr05.csv", key="claim_table35_csv")
 
     if st.button("Compute Care Claim", use_container_width=True):
         try:
@@ -1747,16 +2316,17 @@ elif selected_function == "Care Claim (Full)":
                         effective_life_expectancy_years = float(standard_remaining_life)
                         derived_anchor = float(standard_anchor)
                     else:
-                        if impairment_input_type == "end_age":
+                        if impairment_input_type == "live_until_age":
                             effective_life_expectancy_years = float(impaired_end_age) - effective_claimant_age
                         else:
                             effective_life_expectancy_years = float(standard_remaining_life) - float(years_reduction)
                         if effective_life_expectancy_years <= 0:
                             raise ValueError("Impaired life expectancy years must be greater than 0.")
-                        _, derived_anchor = VehicleCalculation.derive_anchor_from_remaining_life(
-                            zero_csv=add_zero,
-                            point5_csv=add_p5,
-                            remaining_life_years=effective_life_expectancy_years,
+                        derived_anchor = _impaired_life_anchor(
+                            gender=str(gender),
+                            remaining_life_years=float(effective_life_expectancy_years),
+                            method=str(claim_imp_method),
+                            table36_csv=table36_csv,
                         )
                     if life_multiplier_override <= 0:
                         life_multiplier = float(derived_anchor)
@@ -1791,7 +2361,8 @@ elif selected_function == "Care Claim (Full)":
             claim_calc = CareClaimCalculation(
                 care_calculation=CareCalculation(),
                 care_multiplier_calculation=CareMultiplierCalculation(
-                    table36_vector=_load_table36_vector(table36_csv)
+                    table36_vector=_load_table36_vector(table36_csv),
+                    table35_vector=_load_table36_vector(table35_csv),
                 ),
             )
             result = claim_calc.calculate(
@@ -1811,6 +2382,12 @@ elif selected_function == "Care Claim (Full)":
                 term_end_years=term_end_years,
                 life_expectancy_years=effective_life_expectancy_years,
                 life_multiplier=life_multiplier,
+                use_apportionment=not (
+                    le_input_mode == "derived_from_dates"
+                    and life_expectancy_basis == "impaired"
+                    and str(claim_imp_method) == "term_certain"
+                ),
+                apportionment_method=str(claim_apportion_method),
             )
 
             st.success(SUCCESS_MSG)
@@ -1860,6 +2437,21 @@ elif selected_function == "Care (Split)":
         else:
             life_expectancy_basis = "standard"
     with c3:
+        split_bf_le_basis = "standard"
+        split_bf_imp_live_until_age = 0.0
+        split_bf_multiplier_method = "term_certain"
+        split_imp_method = "find_appropriate_age"
+        split_apportion_method = st.selectbox(
+            "Apportioning Future Loss Method",
+            ["term_certain_end_minus_start", "discount_factor_to_start_x_term_certain_period"],
+            index=0,
+            key="split_apportion_method",
+            format_func=lambda v: (
+                "Term Certain Multiplier at End - Term Certain Multiplier at Start"
+                if v == "term_certain_end_minus_start"
+                else "Discount Factor to Start x Multiplier Term Certain for Period"
+            ),
+        )
         if le_input_mode == "manual_years":
             life_expectancy_years = st.number_input(
                 "Life Expectancy Years",
@@ -1876,18 +2468,54 @@ elif selected_function == "Care (Split)":
             if life_expectancy_basis == "impaired":
                 impairment_input_type = st.selectbox(
                     "Impairment Input Type",
-                    ["end_age", "years_reduction"],
+                    ["live_until_age"],
                     index=0,
                     key="split_impairment_input_type",
+                    format_func=lambda v: "Live Until (Years Old)",
                 )
-                if impairment_input_type == "end_age":
+                split_imp_method = st.selectbox(
+                    "Impaired Multiplier Method",
+                    ["find_appropriate_age", "term_certain"],
+                    index=0,
+                    key="split_imp_method",
+                )
+                if impairment_input_type == "live_until_age":
                     impaired_end_age = st.number_input(
-                        "Impaired End Age",
+                        "Impairment (Live Until Age)",
                         value=72.00,
                         min_value=0.01,
                         step=0.01,
                         format="%.2f",
                         key="split_impaired_end_age",
+                    )
+                st.markdown("**But For Life Expectancy**")
+                split_bf_le_basis = st.selectbox(
+                    "But For Life Expectancy",
+                    ["standard", "impaired"],
+                    index=0,
+                    key="split_bf_le_basis",
+                    format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+                )
+                if split_bf_le_basis == "impaired":
+                    _ = st.selectbox(
+                        "But For Impairment Input Type",
+                        ["live_until_age"],
+                        index=0,
+                        key="split_bf_imp_type",
+                        format_func=lambda v: "Live Until (Years Old)",
+                    )
+                    split_bf_imp_live_until_age = st.number_input(
+                        "But For Impairment (Live Until Age)",
+                        value=0.0,
+                        step=0.01,
+                        format="%.2f",
+                        key="split_bf_imp_live_until_age",
+                    )
+                    split_bf_multiplier_method = st.selectbox(
+                        "But For Multiplier Method",
+                        ["term_certain", "find_appropriate_age"],
+                        index=0,
+                        key="split_bf_imp_method",
                     )
                 else:
                     years_reduction = st.number_input(
@@ -1899,7 +2527,7 @@ elif selected_function == "Care (Split)":
                         key="split_years_reduction",
                     )
             else:
-                impairment_input_type = "end_age"
+                impairment_input_type = "live_until_age"
 
     st.markdown("#### Split Settings")
     loss_count = st.number_input("Loss Count", min_value=1, max_value=20, value=3, step=1, key="split_loss_count")
@@ -1933,6 +2561,7 @@ elif selected_function == "Care (Split)":
     o1, o2 = st.columns(2)
     with o1:
         table36_csv = st.text_input("Table36 CSV Path", value="data/ogden8table36dr05.csv", key="split_table36_csv")
+        table35_csv = st.text_input("Table35 CSV Path", value="data/ogden8table35dr05.csv", key="split_table35_csv")
     with o2:
         require_contiguous = st.checkbox("Require contiguous periods", value=True, key="split_require_contig")
 
@@ -1951,7 +2580,7 @@ elif selected_function == "Care (Split)":
         if life_expectancy_basis == "standard":
             effective_life_expectancy_years = float(standard_remaining_life)
         else:
-            if impairment_input_type == "end_age":
+            if impairment_input_type == "live_until_age":
                 effective_life_expectancy_years = float(impaired_end_age) - float(effective_claimant_age)
             else:
                 effective_life_expectancy_years = float(standard_remaining_life) - float(years_reduction)
@@ -2036,7 +2665,8 @@ elif selected_function == "Care (Split)":
             claim_split_calc = CareClaimCalculation(
                 care_calculation=CareCalculation(),
                 care_multiplier_calculation=CareMultiplierCalculation(
-                    table36_vector=_load_table36_vector(table36_csv)
+                    table36_vector=_load_table36_vector(table36_csv),
+                    table35_vector=_load_table36_vector(table35_csv),
                 ),
             )
             result = claim_split_calc.calculate_split(
@@ -2045,6 +2675,12 @@ elif selected_function == "Care (Split)":
                 life_expectancy_years=float(effective_life_expectancy_years),
                 life_multiplier=life_multiplier,
                 require_contiguous=require_contiguous,
+                use_apportionment=not (
+                    le_input_mode == "derived_from_dates"
+                    and life_expectancy_basis == "impaired"
+                    and str(split_imp_method) == "term_certain"
+                ),
+                apportionment_method=str(split_apportion_method),
             )
             st.success(SUCCESS_MSG)
             st.write(f"Life Multiplier: {life_multiplier:.8f}")
@@ -2088,6 +2724,9 @@ elif selected_function == "Equipment":
         else:
             life_expectancy_basis = "standard"
     with g3:
+        eq_bf_le_basis = "standard"
+        eq_bf_imp_live_until_age = 0.0
+        eq_bf_multiplier_method = "term_certain"
         purchase_mortality_mode = st.selectbox(
             "Purchase Mortality Mode",
             ["no_mortality", "use_mortality", "use_mortality_pi_mm"],
@@ -2097,21 +2736,58 @@ elif selected_function == "Equipment":
         life_expectancy_end_age = None
         impaired_end_age = None
         years_reduction = None
+        eq_imp_method = "find_appropriate_age"
         if le_input_mode == "derived_from_dates" and life_expectancy_basis == "impaired":
             impairment_input_type = st.selectbox(
                 "Impairment Input Type",
-                ["end_age", "years_reduction"],
+                ["live_until_age"],
                 index=0,
                 key="eq_impairment_input_type",
+                format_func=lambda v: "Live Until (Years Old)",
             )
-            if impairment_input_type == "end_age":
+            eq_imp_method = st.selectbox(
+                "Impaired Multiplier Method",
+                ["find_appropriate_age", "term_certain"],
+                index=0,
+                key="eq_imp_method",
+            )
+            if impairment_input_type == "live_until_age":
                 impaired_end_age = st.number_input(
-                    "Impaired End Age",
+                    "Impairment (Live Until Age)",
                     value=72.00,
                     min_value=0.01,
                     step=0.01,
                     format="%.2f",
                     key="eq_impaired_end_age",
+                )
+            st.markdown("**But For Life Expectancy**")
+            eq_bf_le_basis = st.selectbox(
+                "But For Life Expectancy",
+                ["standard", "impaired"],
+                index=0,
+                key="eq_bf_le_basis",
+                format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+            )
+            if eq_bf_le_basis == "impaired":
+                _ = st.selectbox(
+                    "But For Impairment Input Type",
+                    ["live_until_age"],
+                    index=0,
+                    key="eq_bf_imp_type",
+                    format_func=lambda v: "Live Until (Years Old)",
+                )
+                eq_bf_imp_live_until_age = st.number_input(
+                    "But For Impairment (Live Until Age)",
+                    value=0.0,
+                    step=0.01,
+                    format="%.2f",
+                    key="eq_bf_imp_live_until_age",
+                )
+                eq_bf_multiplier_method = st.selectbox(
+                    "But For Multiplier Method",
+                    ["term_certain", "find_appropriate_age"],
+                    index=0,
+                    key="eq_bf_imp_method",
                 )
             else:
                 years_reduction = st.number_input(
@@ -2280,16 +2956,17 @@ elif selected_function == "Equipment":
                         effective_life_expectancy_years = float(standard_remaining_life)
                         derived_anchor = float(standard_anchor)
                     else:
-                        if impairment_input_type == "end_age":
+                        if impairment_input_type == "live_until_age":
                             effective_life_expectancy_years = float(impaired_end_age) - effective_claimant_age
                         else:
                             effective_life_expectancy_years = float(standard_remaining_life) - float(years_reduction)
                         if effective_life_expectancy_years <= 0:
                             raise ValueError("Impaired life expectancy years must be greater than 0.")
-                        _, derived_anchor = VehicleCalculation.derive_anchor_from_remaining_life(
-                            zero_csv=add_zero,
-                            point5_csv=add_p5,
-                            remaining_life_years=effective_life_expectancy_years,
+                        derived_anchor = _impaired_life_anchor(
+                            gender=str(gender),
+                            remaining_life_years=float(effective_life_expectancy_years),
+                            method=str(eq_imp_method),
+                            table36_csv=table36_csv,
                         )
                     if life_multiplier_override <= 0:
                         life_multiplier = float(derived_anchor)
@@ -2358,6 +3035,11 @@ elif selected_function == "Equipment":
                 annual_maintenance=float(annual_maintenance),
                 purchase_mortality_mode=str(purchase_mortality_mode),
                 purchase_boundary_mode=purchase_boundary_mode_override,
+                recurring_use_apportionment=not (
+                    le_input_mode == "derived_from_dates"
+                    and life_expectancy_basis == "impaired"
+                    and str(eq_imp_method) == "term_certain"
+                ),
             )
             st.success(SUCCESS_MSG)
             unit_label = replacement_every_unit.lower()
@@ -2400,9 +3082,68 @@ elif selected_function == "Travel Claim (Full)":
         life_expectancy_basis = st.selectbox("Life Expectancy Basis", ["standard", "impaired"], index=0, key="tr_le_basis")
         discount_rate = st.number_input("Discount Rate Column", value=0.5, step=0.25, format="%.2f", key="tr_dr")
     with g3:
-        impairment_input_type = st.selectbox("Impairment Input Type", ["end_age", "years_reduction"], index=0, key="tr_imp_type", disabled=(life_expectancy_basis != "impaired"))
-        impaired_end_age = st.number_input("Impaired End Age", value=72.00, min_value=0.01, step=0.01, format="%.2f", key="tr_imp_end", disabled=(life_expectancy_basis != "impaired" or impairment_input_type != "end_age"))
-        years_reduction = st.number_input("Years Reduction from Standard", value=0.0, min_value=0.0, step=0.01, format="%.2f", key="tr_years_reduction", disabled=(life_expectancy_basis != "impaired" or impairment_input_type != "years_reduction"))
+        tr_bf_le_basis = "standard"
+        tr_bf_imp_live_until_age = 0.0
+        tr_bf_multiplier_method = "term_certain"
+        tr_imp_method = "find_appropriate_age"
+        tr_apportion_method = st.selectbox(
+            "Apportioning Future Loss Method",
+            ["term_certain_end_minus_start", "discount_factor_to_start_x_term_certain_period"],
+            index=0,
+            key="tr_apportion_method",
+            format_func=lambda v: (
+                "Term Certain Multiplier at End - Term Certain Multiplier at Start"
+                if v == "term_certain_end_minus_start"
+                else "Discount Factor to Start x Multiplier Term Certain for Period"
+            ),
+        )
+        impairment_input_type = st.selectbox(
+            "Impairment Input Type",
+            ["live_until_age"],
+            index=0,
+            key="tr_imp_type",
+            disabled=(life_expectancy_basis != "impaired"),
+            format_func=lambda v: "Live Until (Years Old)",
+        )
+        if life_expectancy_basis == "impaired":
+            tr_imp_method = st.selectbox(
+                "Impaired Multiplier Method",
+                ["find_appropriate_age", "term_certain"],
+                index=0,
+                key="tr_imp_method",
+            )
+        impaired_end_age = st.number_input("Impairment (Live Until Age)", value=72.00, min_value=0.01, step=0.01, format="%.2f", key="tr_imp_end", disabled=(life_expectancy_basis != "impaired"))
+        years_reduction = 0.0
+        if life_expectancy_basis == "impaired":
+            st.markdown("**But For Life Expectancy**")
+            tr_bf_le_basis = st.selectbox(
+                "But For Life Expectancy",
+                ["standard", "impaired"],
+                index=0,
+                key="tr_bf_le_basis",
+                format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+            )
+            if tr_bf_le_basis == "impaired":
+                _ = st.selectbox(
+                    "But For Impairment Input Type",
+                    ["live_until_age"],
+                    index=0,
+                    key="tr_bf_imp_type",
+                    format_func=lambda v: "Live Until (Years Old)",
+                )
+                tr_bf_imp_live_until_age = st.number_input(
+                    "But For Impairment (Live Until Age)",
+                    value=0.0,
+                    step=0.01,
+                    format="%.2f",
+                    key="tr_bf_imp_live_until_age",
+                )
+                tr_bf_multiplier_method = st.selectbox(
+                    "But For Multiplier Method",
+                    ["term_certain", "find_appropriate_age"],
+                    index=0,
+                    key="tr_bf_imp_method",
+                )
 
     st.markdown("#### Travel Claim Settings")
     s1, s2, s3 = st.columns(3)
@@ -2474,10 +3215,8 @@ elif selected_function == "Travel Claim (Full)":
                 if life_expectancy_basis == "standard":
                     effective_life_end_age = float(effective_claimant_age + standard_remaining_life)
                 else:
-                    if impairment_input_type == "end_age":
+                    if impairment_input_type == "live_until_age":
                         effective_life_end_age = float(impaired_end_age)
-                    else:
-                        effective_life_end_age = float(effective_claimant_age + standard_remaining_life - float(years_reduction))
 
             if str(age_at_end_text).strip() == "" or str(age_at_end_text).strip().lower() == "rest of life":
                 age_at_end = float(effective_life_end_age)
@@ -2505,7 +3244,8 @@ elif selected_function == "Travel Claim (Full)":
             calc = TravelClaimCalculation(
                 travel_calculation=TravelCalculation(),
                 care_multiplier_calculation=CareMultiplierCalculation(
-                    table36_vector=_load_table36_vector(paths.table36_csv)
+                    table36_vector=_load_table36_vector(paths.table36_csv),
+                    table35_vector=_load_table36_vector(paths.table35_csv),
                 ),
             )
             result = calc.calculate(
@@ -2520,6 +3260,12 @@ elif selected_function == "Travel Claim (Full)":
                 parking_cost=float(parking_cost),
                 journey_count=float(journey_count),
                 time_increment=str(time_increment),
+                use_apportionment=not (
+                    le_input_mode == "derived_from_dates"
+                    and life_expectancy_basis == "impaired"
+                    and str(tr_imp_method) == "term_certain"
+                ),
+                apportionment_method=str(tr_apportion_method),
             )
             st.success(SUCCESS_MSG)
             st.write(f"Derived Life Expectancy End Age: {effective_life_end_age:.8f}")
@@ -2561,9 +3307,13 @@ elif selected_function == "Vehicle":
         else:
             life_expectancy_basis = "standard"
     with g3:
+        vh_bf_le_basis = "standard"
+        vh_bf_imp_live_until_age = 0.0
+        vh_bf_multiplier_method = "term_certain"
         life_expectancy_end_age = None
         impaired_end_age = None
         years_reduction = None
+        vh_imp_method = "find_appropriate_age"
         purchase_mortality_mode = st.selectbox(
             "Purchase Mortality Mode",
             ["no_mortality", "use_mortality", "use_mortality_pi_mm"],
@@ -2573,18 +3323,54 @@ elif selected_function == "Vehicle":
         if le_input_mode == "derived_from_dates" and life_expectancy_basis == "impaired":
             impairment_input_type = st.selectbox(
                 "Impairment Input Type",
-                ["end_age", "years_reduction"],
+                ["live_until_age"],
                 index=0,
                 key="vh_impairment_input_type",
+                format_func=lambda v: "Live Until (Years Old)",
             )
-            if impairment_input_type == "end_age":
+            vh_imp_method = st.selectbox(
+                "Impaired Multiplier Method",
+                ["find_appropriate_age", "term_certain"],
+                index=0,
+                key="vh_imp_method",
+            )
+            if impairment_input_type == "live_until_age":
                 impaired_end_age = st.number_input(
-                    "Impaired End Age",
+                    "Impairment (Live Until Age)",
                     value=72.00,
                     min_value=0.01,
                     step=0.01,
                     format="%.2f",
                     key="vh_impaired_end_age",
+                )
+            st.markdown("**But For Life Expectancy**")
+            vh_bf_le_basis = st.selectbox(
+                "But For Life Expectancy",
+                ["standard", "impaired"],
+                index=0,
+                key="vh_bf_le_basis",
+                format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+            )
+            if vh_bf_le_basis == "impaired":
+                _ = st.selectbox(
+                    "But For Impairment Input Type",
+                    ["live_until_age"],
+                    index=0,
+                    key="vh_bf_imp_type",
+                    format_func=lambda v: "Live Until (Years Old)",
+                )
+                vh_bf_imp_live_until_age = st.number_input(
+                    "But For Impairment (Live Until Age)",
+                    value=0.0,
+                    step=0.01,
+                    format="%.2f",
+                    key="vh_bf_imp_live_until_age",
+                )
+                vh_bf_multiplier_method = st.selectbox(
+                    "But For Multiplier Method",
+                    ["term_certain", "find_appropriate_age"],
+                    index=0,
+                    key="vh_bf_imp_method",
                 )
             else:
                 years_reduction = st.number_input(
@@ -2599,10 +3385,29 @@ elif selected_function == "Vehicle":
             impairment_input_type = "end_age"
 
     st.markdown("#### Vehicle Settings")
+    # Loss Age(s) - PI-style placeholder inputs
+    lbl_col, in_left, in_right = st.columns([1.15, 1.5, 1.5])
+    with lbl_col:
+        st.markdown("**Loss Age(s)**")
+    with in_left:
+        age_at_start_text = st.text_input(
+            "Start Date/Age of Loss",
+            value="",
+            placeholder="Age at Calculation",
+            key="vh_age_start_text",
+            label_visibility="collapsed",
+        )
+    with in_right:
+        age_at_end_text = st.text_input(
+            "End Date/Age of Loss",
+            value="",
+            placeholder="Rest of Life",
+            key="vh_age_end_text",
+            label_visibility="collapsed",
+        )
+
     s1, s2, s3 = st.columns(3)
     with s1:
-        age_at_start = st.number_input("Age at Start", value=45.40, step=0.01, format="%.2f", key="vh_age_start")
-        age_at_end = st.number_input("Age at End", value=50.00, step=0.01, format="%.2f", key="vh_age_end")
         required_vehicle_cost = st.number_input(
             "Cost of Required Vehicle", value=30000.0, min_value=0.0, step=100.0, key="vh_required_cost"
         )
@@ -2676,6 +3481,9 @@ elif selected_function == "Vehicle":
 
     if st.button("Compute Vehicle", use_container_width=True):
         try:
+            start_raw = (age_at_start_text or "").strip()
+            end_raw = (age_at_end_text or "").strip()
+
             if le_input_mode == "manual_years":
                 if claimant_age is None:
                     raise ValueError("Claimant Age is required in manual_years mode.")
@@ -2712,16 +3520,17 @@ elif selected_function == "Vehicle":
                         effective_life_expectancy_years = float(standard_remaining_life)
                         add_anchor = float(standard_anchor)
                     else:
-                        if impairment_input_type == "end_age":
+                        if impairment_input_type == "live_until_age":
                             effective_life_expectancy_years = float(impaired_end_age) - effective_claimant_age
                         else:
                             effective_life_expectancy_years = float(standard_remaining_life) - float(years_reduction)
                         if effective_life_expectancy_years <= 0:
                             raise ValueError("Impaired life expectancy years must be greater than 0.")
-                        _, add_anchor = VehicleCalculation.derive_anchor_from_remaining_life(
-                            zero_csv=add_zero,
-                            point5_csv=add_p5,
-                            remaining_life_years=effective_life_expectancy_years,
+                        add_anchor = _impaired_life_anchor(
+                            gender=str(gender),
+                            remaining_life_years=float(effective_life_expectancy_years),
+                            method=str(vh_imp_method),
+                            table36_csv=table36_csv,
                         )
                     if life_multiplier_override <= 0:
                         life_multiplier = float(add_anchor)
@@ -2736,6 +3545,12 @@ elif selected_function == "Vehicle":
                     raise ValueError("Life Expectancy Years is required in manual_years mode.")
                 effective_life_expectancy_years = float(life_expectancy_years)
                 life_expectancy_end_age = effective_claimant_age + effective_life_expectancy_years
+
+            # PI-style loss age defaults:
+            # blank start => age at calculation
+            # blank end => rest of life (current life expectancy end age)
+            age_at_start = float(start_raw) if start_raw else float(effective_claimant_age)
+            age_at_end = float(end_raw) if end_raw else float(life_expectancy_end_age)
 
             calc = VehicleCalculation(
                 table35_vector=_load_table36_vector(table35_csv),
@@ -2757,6 +3572,11 @@ elif selected_function == "Vehicle":
                 increased_insurance=float(increased_insurance),
                 increased_running_costs=float(increased_running_costs),
                 purchase_mortality_mode=str(purchase_mortality_mode),
+                annual_use_apportionment=not (
+                    le_input_mode == "derived_from_dates"
+                    and life_expectancy_basis == "impaired"
+                    and str(vh_imp_method) == "term_certain"
+                ),
             )
             unit_label = replacement_every_unit.lower()
             if unit_label.endswith("s"):
@@ -2813,6 +3633,11 @@ elif selected_function == "Earnings":
         impairment_live_until_age = 0.0
         years_reduction = 0.0
         impaired_multiplier_method = "find_appropriate_age"
+        but_for_life_expectancy_basis = "standard"
+        but_for_impairment_input_type = "live_until_age"
+        but_for_impairment_live_until_age = 0.0
+        but_for_years_reduction = 0.0
+        but_for_multiplier_method = "term_certain"
         if le_input_mode == "derived_from_dates" and life_expectancy_basis == "impaired":
             impairment_input_type = st.selectbox(
                 "Impairment Input Type",
@@ -2843,6 +3668,45 @@ elif selected_function == "Earnings":
                 ["find_appropriate_age", "term_certain"],
                 key="er_imp_method",
             )
+            st.markdown("**But For Life Expectancy**")
+            but_for_life_expectancy_basis = st.selectbox(
+                "But For Life Expectancy",
+                ["standard", "impaired"],
+                index=0,
+                key="er_but_for_le_basis",
+                format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+            )
+            if but_for_life_expectancy_basis == "impaired":
+                but_for_impairment_input_type = st.selectbox(
+                    "But For Impairment Input Type",
+                    ["live_until_age", "years_reduction"],
+                    index=0,
+                    key="er_bf_impairment_input_type",
+                    format_func=lambda v: "Live Until (Years Old)" if v == "live_until_age" else "Years Reduction from Standard",
+                )
+                if but_for_impairment_input_type == "live_until_age":
+                    but_for_impairment_live_until_age = st.number_input(
+                        "But For Impairment (Live Until Age)",
+                        value=0.0,
+                        step=0.01,
+                        format="%.2f",
+                        key="er_bf_imp_live_until_age",
+                    )
+                else:
+                    but_for_years_reduction = st.number_input(
+                        "But For Years Reduction from Standard",
+                        value=0.0,
+                        min_value=0.0,
+                        step=0.01,
+                        format="%.2f",
+                        key="er_bf_years_reduction",
+                    )
+                but_for_multiplier_method = st.selectbox(
+                    "But For Multiplier Method",
+                    ["term_certain", "find_appropriate_age"],
+                    index=0,
+                    key="er_bf_imp_method",
+                )
         else:
             impairment_input_type = "live_until_age"
 
@@ -3032,6 +3896,10 @@ elif selected_function == "Earnings":
         st.caption(f"Calculated contingency (Before): {calc_before:.2f}")
         st.caption(f"Calculated contingency (As Result): {calc_after:.2f}")
         manual_cont_override = st.checkbox("Manual contingency override", value=False, key="er_manual_cont_override")
+    if "er_cont_before" not in st.session_state:
+        st.session_state["er_cont_before"] = 0.0
+    if "er_cont_after" not in st.session_state:
+        st.session_state["er_cont_after"] = 0.0
     if not manual_cont_override:
         st.session_state["er_cont_before"] = 0.0
         st.session_state["er_cont_after"] = 0.0
@@ -3039,7 +3907,6 @@ elif selected_function == "Earnings":
     with c4:
         contingency_before_injury = st.number_input(
             "Override Contingency Before Injury",
-            value=0.0,
             min_value=0.0,
             step=0.01,
             format="%.4f",
@@ -3049,7 +3916,6 @@ elif selected_function == "Earnings":
     with c5:
         contingency_as_result = st.number_input(
             "Override Contingency As Result Of Injury",
-            value=0.0,
             min_value=0.0,
             step=0.01,
             format="%.4f",
@@ -3082,6 +3948,8 @@ elif selected_function == "Earnings":
                     raise ValueError("Claimant Age is required in manual_years mode.")
                 effective_claimant_age = float(claimant_age)
                 effective_impairment_end_age = float(impairment_live_until_age) if float(impairment_live_until_age) > 0 else None
+                effective_but_for_impairment_end_age = None
+                effective_but_for_multiplier_method = "term_certain"
                 effective_life_end_age = None
             else:
                 effective_claimant_age = _decimal_age_years(dob=dob, as_of=calculation_date)
@@ -3107,6 +3975,36 @@ elif selected_function == "Earnings":
                         st.caption(f"Derived Impairment End Age: {effective_impairment_end_age:.2f}")
                 else:
                     effective_impairment_end_age = None
+
+                # But-for stream may use a separate life-expectancy basis/method.
+                if life_expectancy_basis == "impaired" and but_for_life_expectancy_basis == "impaired":
+                    if but_for_impairment_input_type == "live_until_age":
+                        effective_but_for_impairment_end_age = (
+                            float(but_for_impairment_live_until_age)
+                            if float(but_for_impairment_live_until_age) > 0
+                            else None
+                        )
+                    else:
+                        bf_remaining_life = float(standard_remaining_life) - float(but_for_years_reduction)
+                        if bf_remaining_life <= 0:
+                            raise ValueError("Derived but-for impaired life expectancy years must be greater than 0.")
+                        effective_but_for_impairment_end_age = float(effective_claimant_age + bf_remaining_life)
+                    effective_but_for_multiplier_method = str(but_for_multiplier_method)
+                    if effective_but_for_impairment_end_age is not None:
+                        st.caption(f"Derived But For Impairment End Age: {effective_but_for_impairment_end_age:.2f}")
+                    if effective_impairment_end_age is not None and effective_but_for_impairment_end_age is not None:
+                        current_remaining = float(effective_impairment_end_age) - float(effective_claimant_age)
+                        but_for_remaining = float(effective_but_for_impairment_end_age) - float(effective_claimant_age)
+                        st.info(
+                            "This results in an impaired Life Expectancy "
+                            f"({current_remaining:.2f}) "
+                            f"{'greater' if current_remaining > but_for_remaining else ('lower' if current_remaining < but_for_remaining else 'equal')} "
+                            "than the But For Life Expectancy "
+                            f"({but_for_remaining:.2f})"
+                        )
+                else:
+                    effective_but_for_impairment_end_age = None
+                    effective_but_for_multiplier_method = "term_certain"
 
             if age_at_start is None:
                 age_at_start = float(effective_claimant_age)
@@ -3173,6 +4071,8 @@ elif selected_function == "Earnings":
                 contingency_factor=float(contingency_before),
                 multiplier_mode=str(multiplier_mode),
                 additional_tables_csv=paths.additional_tables_csv,
+                # PI parity (observed): earnings period/multiplier horizon follows current/injured LE path.
+                # But-for LE controls are retained in UI but are non-operative for this path.
                 impairment_end_age=effective_impairment_end_age,
                 impaired_multiplier_method=str(impaired_multiplier_method),
                 additional_tables_zero_csv=paths.additional_tables_zero_csv,
@@ -3218,6 +4118,7 @@ elif selected_function == "Earnings":
                     [
                         f"DEBUG: Dual-stream contingencies -> before={contingency_before:.8f}, after={contingency_after:.8f}",
                         f"DEBUG: Dual-stream starts -> but_for_start_age={age_at_start_bf:.8f}, residual_start_age={age_at_start_res:.8f}",
+                        f"DEBUG: Dual-stream LE modes -> current={life_expectancy_basis}, but_for={but_for_life_expectancy_basis}",
                     ]
                     + [f"DEBUG: BUT_FOR {line}" for line in result_bf.get("trace", [])]
                     + [f"DEBUG: RESIDUAL {line}" for line in result_res.get("trace", [])]
@@ -3281,30 +4182,58 @@ elif selected_function == "Earnings (Split)":
         gender = st.selectbox("Gender", ["male", "female"], key="ers_gender")
         region = st.selectbox("Region", ["England_Wales_NI"], key="ers_region")
     with g3:
+        but_for_life_expectancy_basis = "standard"
+        but_for_impairment_input_type = "live_until_age"
+        but_for_impairment_live_until_age = 0.0
+        but_for_multiplier_method = "term_certain"
         if le_input_mode == "derived_from_dates":
             life_expectancy_basis = st.selectbox("Life Expectancy Basis", ["standard", "impaired"], index=0, key="ers_le_basis")
             if life_expectancy_basis == "impaired":
                 impairment_input_type = st.selectbox(
                     "Impairment Input Type",
-                    ["live_until_age", "years_reduction"],
+                    ["live_until_age"],
                     index=0,
                     key="ers_imp_type",
+                    format_func=lambda v: "Live Until (Years Old)",
                 )
-                if impairment_input_type == "live_until_age":
-                    impairment_live_until_age = st.number_input(
-                        "Impairment (Live Until Age)", value=66.0, step=0.01, format="%.2f", key="ers_imp_live_until"
-                    )
-                    years_reduction = 0.0
-                else:
-                    years_reduction = st.number_input(
-                        "Impairment (Years Reduction)", value=5.0, step=0.01, format="%.2f", key="ers_imp_years_reduction"
-                    )
-                    impairment_live_until_age = 0.0
+                impairment_live_until_age = st.number_input(
+                    "Impairment (Live Until Age)", value=66.0, step=0.01, format="%.2f", key="ers_imp_live_until"
+                )
+                years_reduction = 0.0
                 impaired_multiplier_method = st.selectbox(
                     "Impaired Multiplier Method",
                     ["find_appropriate_age", "term_certain"],
                     key="ers_imp_method",
                 )
+                st.markdown("**But For Life Expectancy**")
+                but_for_life_expectancy_basis = st.selectbox(
+                    "But For Life Expectancy",
+                    ["standard", "impaired"],
+                    index=0,
+                    key="ers_but_for_le_basis",
+                    format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+                )
+                if but_for_life_expectancy_basis == "impaired":
+                    but_for_impairment_input_type = st.selectbox(
+                        "But For Impairment Input Type",
+                        ["live_until_age"],
+                        index=0,
+                        key="ers_bf_impairment_input_type",
+                        format_func=lambda v: "Live Until (Years Old)",
+                    )
+                    but_for_impairment_live_until_age = st.number_input(
+                        "But For Impairment (Live Until Age)",
+                        value=65.0,
+                        step=0.01,
+                        format="%.2f",
+                        key="ers_bf_imp_live_until_age",
+                    )
+                    but_for_multiplier_method = st.selectbox(
+                        "But For Multiplier Method",
+                        ["term_certain", "find_appropriate_age"],
+                        index=0,
+                        key="ers_bf_imp_method",
+                    )
             else:
                 impairment_input_type = "live_until_age"
                 impairment_live_until_age = 0.0
@@ -3523,6 +4452,22 @@ elif selected_function == "Earnings (Split)":
                     effective_impairment_end_age = float(effective_claimant_age + derived_remaining_life)
                 if effective_impairment_end_age is not None:
                     st.caption(f"Derived Impairment End Age: {effective_impairment_end_age:.2f}")
+                if but_for_life_expectancy_basis == "impaired":
+                    effective_but_for_impairment_end_age = (
+                        float(but_for_impairment_live_until_age) if float(but_for_impairment_live_until_age) > 0 else None
+                    )
+                    if effective_but_for_impairment_end_age is not None:
+                        st.caption(f"Derived But For Impairment End Age: {effective_but_for_impairment_end_age:.2f}")
+                    if effective_impairment_end_age is not None and effective_but_for_impairment_end_age is not None:
+                        current_remaining = float(effective_impairment_end_age) - float(effective_claimant_age)
+                        but_for_remaining = float(effective_but_for_impairment_end_age) - float(effective_claimant_age)
+                        st.info(
+                            "This results in an impaired Life Expectancy "
+                            f"({current_remaining:.2f}) "
+                            f"{'greater' if current_remaining > but_for_remaining else ('lower' if current_remaining < but_for_remaining else 'equal')} "
+                            "than the But For Life Expectancy "
+                            f"({but_for_remaining:.2f})"
+                        )
             else:
                 effective_impairment_end_age = None
 
@@ -3673,6 +4618,7 @@ elif selected_function == "Earnings (Split)":
                 "trace": (
                     [
                         f"DEBUG: Dual-stream contingencies -> before={contingency_before:.8f}, after={contingency_after:.8f}",
+                        f"DEBUG: Dual-stream LE modes -> current={life_expectancy_basis}, but_for={but_for_life_expectancy_basis}",
                     ]
                     + [f"DEBUG: BUT_FOR {line}" for line in result_bf.get("trace", [])]
                     + [f"DEBUG: RESIDUAL {line}" for line in result_res.get("trace", [])]
@@ -3738,36 +4684,66 @@ elif selected_function == "Earnings (ASHE)":
 
     with g3:
         multiplier_mode = st.selectbox("Multiplier Mode", ["auto", "manual", "additional"], key="eas_multiplier_mode")
+        but_for_life_expectancy_basis = "standard"
+        but_for_impairment_input_type = "live_until_age"
+        but_for_impairment_live_until_age = 0.0
+        but_for_multiplier_method = "term_certain"
         if le_input_mode == "derived_from_dates" and life_expectancy_basis == "impaired":
             impairment_input_type = st.selectbox(
                 "Impairment Input Type",
-                ["end_age", "years_reduction"],
+                ["live_until_age"],
                 index=0,
                 key="eas_impairment_input_type",
+                format_func=lambda v: "Live Until (Years Old)",
             )
-            if impairment_input_type == "end_age":
-                impairment_end_age = st.number_input(
-                    "Impairment End Age",
-                    value=0.0,
+            impairment_end_age = st.number_input(
+                "Impairment (Live Until Age)",
+                value=0.0,
+                step=0.01,
+                format="%.2f",
+                key="eas_imp_end",
+            )
+            years_reduction = 0.0
+            impaired_multiplier_method = st.selectbox(
+                "Impaired Multiplier Method",
+                ["find_appropriate_age", "term_certain"],
+                index=0,
+                key="eas_imp_method",
+            )
+            st.markdown("**But For Life Expectancy**")
+            but_for_life_expectancy_basis = st.selectbox(
+                "But For Life Expectancy",
+                ["standard", "impaired"],
+                index=0,
+                key="eas_but_for_le_basis",
+                format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+            )
+            if but_for_life_expectancy_basis == "impaired":
+                but_for_impairment_input_type = st.selectbox(
+                    "But For Impairment Input Type",
+                    ["live_until_age"],
+                    index=0,
+                    key="eas_bf_impairment_input_type",
+                    format_func=lambda v: "Live Until (Years Old)",
+                )
+                but_for_impairment_live_until_age = st.number_input(
+                    "But For Impairment (Live Until Age)",
+                    value=65.0,
                     step=0.01,
                     format="%.2f",
-                    key="eas_imp_end",
+                    key="eas_bf_imp_live_until_age",
                 )
-                years_reduction = 0.0
-            else:
-                years_reduction = st.number_input(
-                    "Years Reduction from Standard",
-                    value=0.0,
-                    min_value=0.0,
-                    step=0.01,
-                    format="%.2f",
-                    key="eas_years_reduction",
+                but_for_multiplier_method = st.selectbox(
+                    "But For Multiplier Method",
+                    ["term_certain", "find_appropriate_age"],
+                    index=0,
+                    key="eas_bf_imp_method",
                 )
-                impairment_end_age = 0.0
         else:
-            impairment_input_type = "end_age"
+            impairment_input_type = "live_until_age"
             impairment_end_age = 0.0
             years_reduction = 0.0
+            impaired_multiplier_method = "find_appropriate_age"
 
     st.markdown("#### Contingency Factor")
     c1, c2 = st.columns(2)
@@ -4181,16 +5157,24 @@ elif selected_function == "Earnings (ASHE)":
                 if life_expectancy_basis == "standard":
                     derived_life_end_age = float(effective_claimant_age + standard_remaining_life)
                 else:
-                    if impairment_input_type == "end_age":
-                        if float(impairment_end_age) <= 0.0:
-                            raise ValueError("Impairment End Age must be greater than 0.")
-                        derived_life_end_age = float(impairment_end_age)
-                    else:
-                        derived_remaining_life = float(standard_remaining_life) - float(years_reduction)
-                        if derived_remaining_life <= 0.0:
-                            raise ValueError("Derived impaired life expectancy years must be greater than 0.")
-                        derived_life_end_age = float(effective_claimant_age + derived_remaining_life)
+                    if float(impairment_end_age) <= 0.0:
+                        raise ValueError("Impairment (Live Until Age) must be greater than 0.")
+                    derived_life_end_age = float(impairment_end_age)
                 st.caption(f"Derived LE End Age: {derived_life_end_age:.2f}")
+                if life_expectancy_basis == "impaired" and but_for_life_expectancy_basis == "impaired":
+                    effective_but_for_impairment_end_age = (
+                        float(but_for_impairment_live_until_age) if float(but_for_impairment_live_until_age) > 0 else None
+                    )
+                    if effective_but_for_impairment_end_age is not None:
+                        bf_remaining = float(effective_but_for_impairment_end_age) - float(effective_claimant_age)
+                        current_remaining = float(derived_life_end_age) - float(effective_claimant_age)
+                        st.info(
+                            "This results in an impaired Life Expectancy "
+                            f"({current_remaining:.2f}) "
+                            f"{'greater' if current_remaining > bf_remaining else ('lower' if current_remaining < bf_remaining else 'equal')} "
+                            "than the But For Life Expectancy "
+                            f"({bf_remaining:.2f})"
+                        )
                 if float(life_expectancy_end_age) > 0.0:
                     effective_life_end_age = float(life_expectancy_end_age)
                     st.caption(f"Manual LE End Age override applied: {effective_life_end_age:.2f}")
@@ -4201,6 +5185,13 @@ elif selected_function == "Earnings (ASHE)":
                 age_at_start = float(effective_claimant_age)
             if age_at_end is None:
                 age_at_end = float(retirement_age_mapping)
+
+            # PI-style ASHE display/calculation splits the loss at the next tax-year boundary
+            # (6 April) when starting from age-at-calculation in derived-from-dates mode.
+            tax_year_boundary_age = None
+            if le_input_mode == "derived_from_dates":
+                next_tax_boundary = _next_tax_year_boundary(calculation_date)
+                tax_year_boundary_age = _decimal_age_years(dob=dob, as_of=next_tax_boundary)
 
             ashe_workbook_path = (
                 str(ashe_workbook_path_manual).strip()
@@ -4221,6 +5212,14 @@ elif selected_function == "Earnings (ASHE)":
             residual_is_net = str(residual_rate) == "Net"
             contingency_before = float(cont_before) if manual_ashe_cont_override else float(calc_cont_before)
             contingency_after = float(cont_after) if manual_ashe_cont_override else float(calc_cont_after)
+
+            paths = resolve_ogden_paths(
+                gender=str(gender),
+                discount_rate=float(discount_rate),
+                retirement_age=int(retirement_age_mapping),
+            )
+            if paths.warning:
+                st.warning(paths.warning)
 
             base = EarningsCalculation(
                 table36_vector=_load_table36_vector(table36_csv),
@@ -4271,22 +5270,44 @@ elif selected_function == "Earnings (ASHE)":
                         contingency_factor=float(contingency_value),
                         multiplier_mode=str(multiplier_mode),
                         additional_tables_csv=str(additional_tables_csv),
+                        additional_tables_zero_csv=str(paths.additional_tables_zero_csv),
+                        additional_tables_point5_csv=str(paths.additional_tables_point5_csv),
+                        table35_csv=str(paths.table35_csv),
+                        retirement_table_full_csv=str(paths.retirement_table_csv),
                         life_expectancy_end_age=(None if effective_life_end_age is None else float(effective_life_end_age)),
+                        impairment_end_age=(
+                            float(impairment_end_age) if str(life_expectancy_basis) == "impaired" and float(impairment_end_age) > 0.0 else None
+                        ),
+                        impaired_multiplier_method=str(impaired_multiplier_method),
                         round_final_multiplier_dp=int(round_final_multiplier_dp),
                         pi_round_intermediates_2dp=bool(pi_round_intermediates_2dp),
                     ), phase_name
 
+                def _append_phase(phase_start: float, phase_end: float, phase_name: str):
+                    if phase_end <= phase_start:
+                        return
+                    result_phase, name_phase = _calc_phase(float(phase_start), float(phase_end), phase_name)
+                    phases.append((name_phase, result_phase))
+                    nonlocal stream_total
+                    stream_total += float(result_phase["total_loss"])
+                    stream_trace.extend([f"{name_phase.upper()} {line}" for line in result_phase.get("trace", [])])
+
+                def _append_with_tax_boundary(phase_start: float, phase_end: float, phase_name: str):
+                    if tax_year_boundary_age is None:
+                        _append_phase(phase_start, phase_end, phase_name)
+                        return
+                    boundary = float(tax_year_boundary_age)
+                    if phase_start < boundary < phase_end:
+                        _append_phase(phase_start, boundary, f"{phase_name}_stub")
+                        _append_phase(boundary, phase_end, f"{phase_name}_main")
+                    else:
+                        _append_phase(phase_start, phase_end, phase_name)
+
                 if stream_start_age > float(age_at_start):
-                    pre_result, pre_name = _calc_phase(float(age_at_start), float(stream_start_age), "pre")
-                    phases.append((pre_name, pre_result))
-                    stream_total += float(pre_result["total_loss"])
-                    stream_trace.extend([f"{pre_name.upper()} {line}" for line in pre_result.get("trace", [])])
+                    _append_with_tax_boundary(float(age_at_start), float(stream_start_age), "pre")
 
                 if float(age_at_end) > stream_start_age:
-                    main_result, main_name = _calc_phase(float(stream_start_age), float(age_at_end), "main")
-                    phases.append((main_name, main_result))
-                    stream_total += float(main_result["total_loss"])
-                    stream_trace.extend([f"{main_name.upper()} {line}" for line in main_result.get("trace", [])])
+                    _append_with_tax_boundary(float(stream_start_age), float(age_at_end), "main")
 
                 if not phases:
                     raise ValueError(f"{stream_label} stream has no valid phase (start must be less than end).")
@@ -5190,9 +6211,68 @@ elif selected_function == "Accommodation (RvJ)":
         life_expectancy_basis = st.selectbox("Life Expectancy Basis", ["standard", "impaired"], index=0, key="arvj_le_basis")
         discount_rate = st.number_input("Discount Rate Column", value=0.5, step=0.25, format="%.2f", key="arvj_dr")
     with g3:
-        impairment_input_type = st.selectbox("Impairment Input Type", ["end_age", "years_reduction"], index=0, key="arvj_imp_type", disabled=(life_expectancy_basis != "impaired"))
-        impaired_end_age = st.number_input("Impaired End Age", value=72.00, min_value=0.01, step=0.01, format="%.2f", key="arvj_imp_end", disabled=(life_expectancy_basis != "impaired" or impairment_input_type != "end_age"))
-        years_reduction = st.number_input("Years Reduction from Standard", value=0.0, min_value=0.0, step=0.01, format="%.2f", key="arvj_years_reduction", disabled=(life_expectancy_basis != "impaired" or impairment_input_type != "years_reduction"))
+        arvj_bf_le_basis = "standard"
+        arvj_bf_imp_live_until_age = 0.0
+        arvj_bf_multiplier_method = "term_certain"
+        arvj_imp_method = "find_appropriate_age"
+        arvj_apportion_method = st.selectbox(
+            "Apportioning Future Loss Method",
+            ["term_certain_end_minus_start", "discount_factor_to_start_x_term_certain_period"],
+            index=0,
+            key="arvj_apportion_method",
+            format_func=lambda v: (
+                "Term Certain Multiplier at End - Term Certain Multiplier at Start"
+                if v == "term_certain_end_minus_start"
+                else "Discount Factor to Start x Multiplier Term Certain for Period"
+            ),
+        )
+        impairment_input_type = st.selectbox(
+            "Impairment Input Type",
+            ["live_until_age"],
+            index=0,
+            key="arvj_imp_type",
+            disabled=(life_expectancy_basis != "impaired"),
+            format_func=lambda v: "Live Until (Years Old)",
+        )
+        if life_expectancy_basis == "impaired":
+            arvj_imp_method = st.selectbox(
+                "Impaired Multiplier Method",
+                ["find_appropriate_age", "term_certain"],
+                index=0,
+                key="arvj_imp_method",
+            )
+        impaired_end_age = st.number_input("Impairment (Live Until Age)", value=72.00, min_value=0.01, step=0.01, format="%.2f", key="arvj_imp_end", disabled=(life_expectancy_basis != "impaired"))
+        years_reduction = 0.0
+        if life_expectancy_basis == "impaired":
+            st.markdown("**But For Life Expectancy**")
+            arvj_bf_le_basis = st.selectbox(
+                "But For Life Expectancy",
+                ["standard", "impaired"],
+                index=0,
+                key="arvj_bf_le_basis",
+                format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+            )
+            if arvj_bf_le_basis == "impaired":
+                _ = st.selectbox(
+                    "But For Impairment Input Type",
+                    ["live_until_age"],
+                    index=0,
+                    key="arvj_bf_imp_type",
+                    format_func=lambda v: "Live Until (Years Old)",
+                )
+                arvj_bf_imp_live_until_age = st.number_input(
+                    "But For Impairment (Live Until Age)",
+                    value=0.0,
+                    step=0.01,
+                    format="%.2f",
+                    key="arvj_bf_imp_live_until_age",
+                )
+                arvj_bf_multiplier_method = st.selectbox(
+                    "But For Multiplier Method",
+                    ["term_certain", "find_appropriate_age"],
+                    index=0,
+                    key="arvj_bf_imp_method",
+                )
 
     st.markdown("#### RvJ Settings")
     s1, s2, s3 = st.columns(3)
@@ -5234,10 +6314,8 @@ elif selected_function == "Accommodation (RvJ)":
             if life_expectancy_basis == "standard":
                 effective_life_end_age = float(effective_claimant_age + standard_remaining_life)
             else:
-                if impairment_input_type == "end_age":
+                if impairment_input_type == "live_until_age":
                     effective_life_end_age = float(impaired_end_age)
-                else:
-                    effective_life_end_age = float(effective_claimant_age + standard_remaining_life - float(years_reduction))
             if life_end_age_override is not None:
                 effective_life_end_age = float(life_end_age_override)
 
@@ -5282,6 +6360,12 @@ elif selected_function == "Accommodation (RvJ)":
                 betterment=float(betterment),
                 increased_running_costs=float(increased_running_costs),
                 rate_to_apply=float(rate_to_apply),
+                use_apportionment=not (
+                    le_input_mode == "derived_from_dates"
+                    and life_expectancy_basis == "impaired"
+                    and str(arvj_imp_method) == "term_certain"
+                ),
+                apportionment_method=str(arvj_apportion_method),
             )
             st.success(SUCCESS_MSG)
             st.write(f"Derived LE End Age: {effective_life_end_age:.8f}")
@@ -5313,9 +6397,49 @@ elif selected_function == "Accommodation (Swift v Carpenter)":
         life_expectancy_basis = st.selectbox("Life Expectancy Basis", ["standard", "impaired"], index=0, key="asc_le_basis")
         discount_rate = st.number_input("Discount Rate Column", value=0.5, step=0.25, format="%.2f", key="asc_dr")
     with g3:
-        impairment_input_type = st.selectbox("Impairment Input Type", ["end_age", "years_reduction"], index=0, key="asc_imp_type", disabled=(life_expectancy_basis != "impaired"))
-        impaired_end_age = st.number_input("Impaired End Age", value=72.00, min_value=0.01, step=0.01, format="%.2f", key="asc_imp_end", disabled=(life_expectancy_basis != "impaired" or impairment_input_type != "end_age"))
-        years_reduction = st.number_input("Years Reduction from Standard", value=0.0, min_value=0.0, step=0.01, format="%.2f", key="asc_years_reduction", disabled=(life_expectancy_basis != "impaired" or impairment_input_type != "years_reduction"))
+        asc_bf_le_basis = "standard"
+        asc_bf_imp_live_until_age = 0.0
+        asc_bf_multiplier_method = "term_certain"
+        impairment_input_type = st.selectbox(
+            "Impairment Input Type",
+            ["live_until_age"],
+            index=0,
+            key="asc_imp_type",
+            disabled=(life_expectancy_basis != "impaired"),
+            format_func=lambda v: "Live Until (Years Old)",
+        )
+        impaired_end_age = st.number_input("Impairment (Live Until Age)", value=72.00, min_value=0.01, step=0.01, format="%.2f", key="asc_imp_end", disabled=(life_expectancy_basis != "impaired"))
+        years_reduction = 0.0
+        if life_expectancy_basis == "impaired":
+            st.markdown("**But For Life Expectancy**")
+            asc_bf_le_basis = st.selectbox(
+                "But For Life Expectancy",
+                ["standard", "impaired"],
+                index=0,
+                key="asc_bf_le_basis",
+                format_func=lambda v: "Standard" if v == "standard" else "Impaired",
+            )
+            if asc_bf_le_basis == "impaired":
+                _ = st.selectbox(
+                    "But For Impairment Input Type",
+                    ["live_until_age"],
+                    index=0,
+                    key="asc_bf_imp_type",
+                    format_func=lambda v: "Live Until (Years Old)",
+                )
+                asc_bf_imp_live_until_age = st.number_input(
+                    "But For Impairment (Live Until Age)",
+                    value=0.0,
+                    step=0.01,
+                    format="%.2f",
+                    key="asc_bf_imp_live_until_age",
+                )
+                asc_bf_multiplier_method = st.selectbox(
+                    "But For Multiplier Method",
+                    ["term_certain", "find_appropriate_age"],
+                    index=0,
+                    key="asc_bf_imp_method",
+                )
 
     st.markdown("#### Swift v Carpenter Settings")
     s1, s2 = st.columns(2)
@@ -5345,10 +6469,8 @@ elif selected_function == "Accommodation (Swift v Carpenter)":
             if life_expectancy_basis == "standard":
                 effective_life_end_age = float(effective_claimant_age + standard_remaining_life)
             else:
-                if impairment_input_type == "end_age":
+                if impairment_input_type == "live_until_age":
                     effective_life_end_age = float(impaired_end_age)
-                else:
-                    effective_life_end_age = float(effective_claimant_age + standard_remaining_life - float(years_reduction))
 
             age_at_start = float(effective_claimant_age) if str(age_at_start_text).strip() == "" else float(age_at_start_text)
             if str(age_at_end_text).strip() == "" or str(age_at_end_text).strip().lower() == "rest of life":

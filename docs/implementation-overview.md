@@ -16,30 +16,42 @@ Purpose: complete map of implemented calculation paths, alternatives, and select
 - Alternatives:
   - Start/end can be explicit ages or derived (`at calculation age` / `rest of life`).
   - Life multiplier can be provided/overridden or derived upstream.
+  - Apportioning method selector:
+    - `term_certain_end_minus_start` (Table 36 apportionment baseline).
+    - `discount_factor_to_start_x_term_certain_period` (Table 35 discount-to-start x Table 36 period term, then life scaling).
 - Trigger:
   - UI `start_mode`, `end_mode`, life-multiplier override, LE basis controls.
 - Sources:
   - `data/ogden8table36dr05.csv`.
+  - `data/ogden8table35dr05.csv` (when discount-factor apportionment method is selected).
 
 ### General Continuous (GC) (`GeneralContinuousCalculation`)
 - Primary path:
   - Annualise periodic loss, then apply CM period multiplier.
 - Alternatives:
   - Frequency variants: year/month/week/day.
+  - Inherited CM apportioning method selector:
+    - `term_certain_end_minus_start`.
+    - `discount_factor_to_start_x_term_certain_period`.
 - Trigger:
   - `loss_frequency`.
 - Sources:
   - `data/ogden8table36dr05.csv` (through CM period-multiplier calculation).
+  - `data/ogden8table35dr05.csv` (through CM when discount-factor apportionment method is selected).
 
 ### General Continuous But For (`GeneralContinuousButForCalculation`)
 - Primary path:
   - Annualise prior and result streams; net annual x CM multiplier.
 - Alternatives:
   - Frequency variants on both streams.
+  - Inherited CM apportioning method selector:
+    - `term_certain_end_minus_start`.
+    - `discount_factor_to_start_x_term_certain_period`.
 - Trigger:
   - `cost_prior_frequency`, `cost_result_frequency`.
 - Sources:
   - `data/ogden8table36dr05.csv` (through CM period-multiplier calculation).
+  - `data/ogden8table35dr05.csv` (through CM when discount-factor apportionment method is selected).
 
 ### General One Off (GOF) (`GeneralOneOffCalculation`)
 - Primary path:
@@ -56,6 +68,9 @@ Purpose: complete map of implemented calculation paths, alternatives, and select
   - Build purchase schedule; sum Table 35 factors; mortality-adjust by `life_multiplier / Table36(life_years)`.
 - Alternatives:
   - Recurrence units (days/weeks/months/years), PI parity rounding on/off.
+  - PI parity mode meaning (in this function): rounding behavior only.
+    - ON: round each Table 35 purchase factor to 2dp before summing, then round adjusted multiplier to 3dp.
+    - OFF: keep full-precision factors and adjusted multiplier (no parity rounding).
 - Trigger:
   - `recurrence_unit`, `pi_parity_mode`.
 - Sources:
@@ -67,6 +82,9 @@ Purpose: complete map of implemented calculation paths, alternatives, and select
 - Alternatives:
   - Recurrence units: days/weeks/months/years.
   - PI parity rounding on/off.
+  - PI parity mode meaning (in this function): inherited GP rounding behavior only.
+    - ON: 2dp rounding per Table 35 purchase factor + 3dp rounding of adjusted multiplier.
+    - OFF: full-precision path (no parity rounding).
 - Trigger:
   - `recurrence_unit`, `pi_parity_mode`.
 - Sources:
@@ -77,10 +95,14 @@ Purpose: complete map of implemented calculation paths, alternatives, and select
   - Split phases; annualise each; apply CM per phase; sum totals.
 - Alternatives:
   - Capping phase end to LE on/off.
+  - Inherited CM apportioning method selector:
+    - `term_certain_end_minus_start`.
+    - `discount_factor_to_start_x_term_certain_period`.
 - Trigger:
   - `cap_end_to_life_expectancy`.
 - Sources:
   - `data/ogden8table36dr05.csv` (through CM period-multiplier calculation).
+  - `data/ogden8table35dr05.csv` (through CM when discount-factor apportionment method is selected).
 
 ## Care Head
 
@@ -101,20 +123,31 @@ Purpose: complete map of implemented calculation paths, alternatives, and select
   - Care annualisation x Table 36 apportionment multiplier.
 - Alternatives:
   - All care annualisation alternatives + custom term bounds.
+  - Apportioning method selector:
+    - `term_certain_end_minus_start` (Table 36 apportionment baseline).
+    - `discount_factor_to_start_x_term_certain_period` (Table 35 discount-to-start x Table 36 period term, then life scaling).
+  - Impaired override:
+    - `life_expectancy_basis=impaired` + `impaired_multiplier_method=term_certain` uses direct term-certain period multiplier (no apportionment scaling).
 - Trigger:
-  - Care inputs and term/life inputs.
+  - Care inputs, term/life inputs, `apportionment_method`, impaired method settings.
 - Sources:
-  - Table 36.
+  - Table 36 (+ Table 35 when discount-factor apportionment method is selected).
 
 ### Care Split (`CareSplitCalculation` / `CareClaimCalculation.calculate_split`)
 - Primary path:
   - Per-phase care annualisation + per-phase apportionment.
 - Alternatives:
   - Strict contiguity required vs not required.
+  - Apportioning method selector:
+    - `term_certain_end_minus_start` (Table 36 apportionment baseline).
+    - `discount_factor_to_start_x_term_certain_period` (Table 35 discount-to-start x Table 36 period term, then life scaling).
+  - Impaired method routing:
+    - `find_appropriate_age`: apportionment path.
+    - `term_certain`: direct term-certain period per phase (no apportionment scaling).
 - Trigger:
-  - `require_contiguous`.
+  - `require_contiguous`, LE basis/method settings.
 - Sources:
-  - Table 36.
+  - Table 36 (+ Table 35 when discount-factor apportionment method is selected).
 
 ## Travel Head
 
@@ -136,10 +169,16 @@ Purpose: complete map of implemented calculation paths, alternatives, and select
   - Distance input type: `Each_Way` vs `Overall`.
   - Time increment: `Over_Period`, `Per_Day`, `Per_Week`, `Per_Month`, `Per_Year`, `Per_Weekday`, `Per_Weekend`.
   - `Over_Period` annualisation uses supplied period length; other increments use fixed annual frequency factors.
+  - Apportioning method selector:
+    - `term_certain_end_minus_start` (Table 36 apportionment baseline).
+    - `discount_factor_to_start_x_term_certain_period` (Table 35 discount-to-start x Table 36 period term, then life scaling).
+  - Impaired method routing:
+    - `find_appropriate_age`: apportionment path.
+    - `term_certain`: direct term-certain period (no apportionment scaling).
 - Trigger:
-  - Travel inputs + term/life inputs.
+  - Travel inputs + term/life inputs + impaired method settings.
 - Sources:
-  - Table 36.
+  - Table 36 (+ Table 35 when discount-factor apportionment method is selected).
 
 ## Equipment Head
 
@@ -291,8 +330,14 @@ Purpose: complete map of implemented calculation paths, alternatives, and select
 - Alternatives:
   - Discount-rate source toggle (discount-rate column vs custom percent) in UI.
   - Standard vs impaired LE derivation in UI.
+  - Apportioning method selector:
+    - `term_certain_end_minus_start` (Table 36 apportionment baseline).
+    - `discount_factor_to_start_x_term_certain_period` (Table 35 discount-to-start x Table 36 period term, then life scaling).
+  - Impaired method routing for ongoing annual component:
+    - `find_appropriate_age`: apportionment path.
+    - `term_certain`: direct term-certain period (no apportionment scaling).
 - Trigger:
-  - Rate toggle, LE basis, impairment inputs.
+  - Rate toggle, LE basis, impairment inputs, impaired method settings.
 - Sources:
   - Table 36, Table 35, and (for LE derivation in UI) Additional tables.
 

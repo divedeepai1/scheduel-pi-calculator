@@ -28,6 +28,8 @@ class CareClaimCalculation:
         term_end_years: float = 0.0,
         life_expectancy_years: float = 0.0,
         life_multiplier: float = 0.0,
+        use_apportionment: bool = True,
+        apportionment_method: str = "term_certain_end_minus_start",
     ) -> dict:
         care_part = self.care_calculation.calculate(
             age_at_start=age_at_start,
@@ -44,12 +46,36 @@ class CareClaimCalculation:
             number_months_specify=number_months_specify,
         )
 
-        multiplier_part = self.care_multiplier_calculation.apportion_period_multiplier(
-            start_years=term_start_years,
-            end_years=term_end_years,
-            life_expectancy_years=life_expectancy_years,
-            life_multiplier=life_multiplier,
-        )
+        if use_apportionment:
+            multiplier_part = self.care_multiplier_calculation.apportion_period_multiplier(
+                start_years=term_start_years,
+                end_years=term_end_years,
+                life_expectancy_years=life_expectancy_years,
+                life_multiplier=life_multiplier,
+                method=apportionment_method,
+            )
+        else:
+            trace_local: List[str] = []
+            term_start = self.care_multiplier_calculation.table36_multiplier(term_start_years, trace=trace_local)
+            trace_local.append(
+                f"DEBUG: Multiplier for Term Certain {term_start_years:.8f} years at 0.50% = {term_start:.8f}"
+            )
+            term_end = self.care_multiplier_calculation.table36_multiplier(term_end_years, trace=trace_local)
+            trace_local.append(
+                f"DEBUG: Multiplier for Term Certain {term_end_years:.8f} years at 0.50% = {term_end:.8f}"
+            )
+            period_multiplier = term_end - term_start
+            trace_local.append(
+                "DEBUG: Impaired term_certain direct period multiplier (no apportionment) = "
+                f"{term_end:.8f} - {term_start:.8f} = {period_multiplier:.8f}"
+            )
+            multiplier_part = {
+                "term_multiplier_start": term_start,
+                "term_multiplier_end": term_end,
+                "term_multiplier_life_expectancy": 0.0,
+                "period_multiplier": period_multiplier,
+                "trace": trace_local,
+            }
 
         total_award = float(care_part["annualised_cost"]) * float(multiplier_part["period_multiplier"])
 
@@ -78,6 +104,8 @@ class CareClaimCalculation:
         life_multiplier: float,
         require_contiguous: bool = True,
         tolerance: float = 1e-9,
+        use_apportionment: bool = True,
+        apportionment_method: str = "term_certain_end_minus_start",
     ) -> Dict[str, Any]:
         if not periods:
             raise ValueError("periods cannot be empty.")
@@ -131,6 +159,8 @@ class CareClaimCalculation:
                 term_end_years=term_end_years,
                 life_expectancy_years=life_expectancy_years,
                 life_multiplier=life_multiplier,
+                use_apportionment=use_apportionment,
+                apportionment_method=apportionment_method,
             )
             phase_award = float(result["total_award"])
             total_award += phase_award

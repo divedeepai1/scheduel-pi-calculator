@@ -34,6 +34,8 @@ class GeneralContinuousButForCalculation:
         end_age: float | None = None,
         start_at_calculation_age: bool = False,
         end_at_rest_of_life: bool = False,
+        use_apportionment: bool = True,
+        apportionment_method: str = "term_certain_end_minus_start",
     ) -> dict:
         if cost_prior < 0 or cost_result < 0:
             raise ValueError("cost_prior and cost_result must be non-negative.")
@@ -52,6 +54,8 @@ class GeneralContinuousButForCalculation:
             end_age=end_age,
             start_at_calculation_age=start_at_calculation_age,
             end_at_rest_of_life=end_at_rest_of_life,
+            use_apportionment=use_apportionment,
+            apportionment_method=apportionment_method,
         )
         period_multiplier = float(cm["period_multiplier"])
         total = float(net_annual_loss * period_multiplier)

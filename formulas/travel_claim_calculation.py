@@ -23,6 +23,8 @@ class TravelClaimCalculation:
         parking_cost: float,
         journey_count: float,
         time_increment: str,
+        use_apportionment: bool = True,
+        apportionment_method: str = "term_certain_end_minus_start",
     ) -> Dict[str, float | List[str]]:
         annual_part = self.travel_calculation.calculate_annual(
             distance=distance,
@@ -36,12 +38,19 @@ class TravelClaimCalculation:
 
         term_start_years = float(age_at_start - claimant_age)
         term_end_years = float(age_at_end - claimant_age)
-        multiplier_part = self.care_multiplier_calculation.apportion_period_multiplier(
-            start_years=term_start_years,
-            end_years=term_end_years,
-            life_expectancy_years=life_expectancy_years,
-            life_multiplier=life_multiplier,
-        )
+        if use_apportionment:
+            multiplier_part = self.care_multiplier_calculation.apportion_period_multiplier(
+                start_years=term_start_years,
+                end_years=term_end_years,
+                life_expectancy_years=life_expectancy_years,
+                life_multiplier=life_multiplier,
+                method=apportionment_method,
+            )
+        else:
+            multiplier_part = self.care_multiplier_calculation.direct_period_multiplier(
+                start_years=term_start_years,
+                end_years=term_end_years,
+            )
 
         total_loss = float(annual_part["annual_loss"]) * float(multiplier_part["period_multiplier"])
 
